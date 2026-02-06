@@ -245,6 +245,7 @@ class TestLaunchCommand:
         assert "PROJECT" in result.output  # Now a positional argument
         assert "--instance-type" in result.output
         assert "--key-pair" in result.output
+        assert "--instance-profile" in result.output
 
     @patch("devbox.launch.launch_programmatic")
     @patch("devbox.cli.ConsoleOutput")
@@ -269,6 +270,7 @@ class TestLaunchCommand:
             project="test-project",
             instance_type="t3.medium",
             key_pair="my-key",
+            instance_profile=None,
             volume_size=0,  # default
             base_ami=None,
             param_prefix="/devbox",  # default
@@ -289,6 +291,8 @@ class TestLaunchCommand:
                 "m5.large",
                 "--key-pair",
                 "full-key",
+                "--instance-profile",
+                "full-profile",
                 "--volume-size",
                 "200",
                 "--base-ami",
@@ -303,6 +307,7 @@ class TestLaunchCommand:
             project="full-project",
             instance_type="m5.large",
             key_pair="full-key",
+            instance_profile="full-profile",
             volume_size=200,
             base_ami="ami-12345678",
             param_prefix="/custom",
@@ -357,6 +362,7 @@ class TestLaunchCommand:
             project="test-project",
             instance_type=None,  # Should be None when not specified
             key_pair=None,  # Should be None when not specified
+            instance_profile=None,
             volume_size=0,
             base_ami=None,
             param_prefix="/devbox",
@@ -378,6 +384,7 @@ class TestLaunchCommand:
             project="test-project",
             instance_type="t3.large",
             key_pair=None,  # Should be None when not specified
+            instance_profile=None,
             volume_size=0,
             base_ami=None,
             param_prefix="/devbox",
@@ -399,6 +406,7 @@ class TestLaunchCommand:
             project="test-project",
             instance_type=None,  # Should be None when not specified
             key_pair="my-keypair",
+            instance_profile=None,
             volume_size=0,
             base_ami=None,
             param_prefix="/devbox",
@@ -541,6 +549,8 @@ class TestIntegrationScenarios:
                 "t3.large",
                 "--key-pair",
                 "my-ec2-keypair",
+                "--instance-profile",
+                "devbox-profile",
                 "--volume-size",
                 "150",
                 "--base-ami",
@@ -555,6 +565,7 @@ class TestIntegrationScenarios:
             project="my-development-box",
             instance_type="t3.large",
             key_pair="my-ec2-keypair",
+            instance_profile="devbox-profile",
             volume_size=150,
             base_ami="ami-0abcdef1234567890",
             param_prefix="/mycompany/devbox",

@@ -311,6 +311,64 @@ def test_launch_instance_success(mock_ec2_client, mock_ec2_resource):
     assert error is None
 
 
+def test_launch_instance_with_instance_profile_name(mock_ec2_client, mock_ec2_resource):
+    """Test launch instance with instance profile name."""
+    mock_instance = MagicMock()
+    mock_instance.id = "i-12345"
+    mock_instance.meta.data = {"State": {"Name": "running"}}
+
+    mock_ec2_client.run_instances.return_value = {
+        "Instances": [{"InstanceId": "i-12345"}]
+    }
+    mock_ec2_resource.Instance.return_value = mock_instance
+
+    launch_instance(
+        mock_ec2_client,
+        mock_ec2_resource,
+        "lt-12345",
+        "ami-12345",
+        "t3.medium",
+        "test-key",
+        [{"DeviceName": "/dev/sda1", "Ebs": {"VolumeSize": 20}}],
+        "test-project",
+        "us-east-1a",
+        instance_profile="devbox-profile",
+    )
+
+    call_args = mock_ec2_client.run_instances.call_args[1]
+    assert call_args["IamInstanceProfile"] == {"Name": "devbox-profile"}
+
+
+def test_launch_instance_with_instance_profile_arn(mock_ec2_client, mock_ec2_resource):
+    """Test launch instance with instance profile ARN."""
+    mock_instance = MagicMock()
+    mock_instance.id = "i-12345"
+    mock_instance.meta.data = {"State": {"Name": "running"}}
+
+    mock_ec2_client.run_instances.return_value = {
+        "Instances": [{"InstanceId": "i-12345"}]
+    }
+    mock_ec2_resource.Instance.return_value = mock_instance
+
+    launch_instance(
+        mock_ec2_client,
+        mock_ec2_resource,
+        "lt-12345",
+        "ami-12345",
+        "t3.medium",
+        "test-key",
+        [{"DeviceName": "/dev/sda1", "Ebs": {"VolumeSize": 20}}],
+        "test-project",
+        "us-east-1a",
+        instance_profile="arn:aws:iam::123456789012:instance-profile/devbox",
+    )
+
+    call_args = mock_ec2_client.run_instances.call_args[1]
+    assert call_args["IamInstanceProfile"] == {
+        "Arn": "arn:aws:iam::123456789012:instance-profile/devbox"
+    }
+
+
 def test_launch_instance_client_error(mock_ec2_client, mock_ec2_resource):
     """Test launch instance with client error."""
     mock_ec2_client.run_instances.side_effect = ClientError(
@@ -351,6 +409,7 @@ def test_update_instance_status_new_project(mock_table):
         "ami-12345",
         "t3.medium",
         "test-keypair",
+        "devbox-profile",
     )
 
     mock_table.put_item.assert_called_once()
@@ -359,6 +418,7 @@ def test_update_instance_status_new_project(mock_table):
     assert call_args["Status"] == "LAUNCHING"
     assert call_args["LastInstanceType"] == "t3.medium"
     assert call_args["LastKeyPair"] == "test-keypair"
+    assert call_args["LastInstanceProfile"] == "devbox-profile"
 
 
 def test_update_instance_status_existing_project(mock_table):
@@ -376,6 +436,7 @@ def test_update_instance_status_existing_project(mock_table):
         "ami-12345",
         "t3.medium",
         "test-keypair",
+        "devbox-profile",
     )
 
     mock_table.put_item.assert_called_once()
@@ -383,6 +444,7 @@ def test_update_instance_status_existing_project(mock_table):
     assert call_args["BaseAmi"] == "ami-base"  # Should preserve existing values
     assert call_args["LastInstanceType"] == "t3.medium"
     assert call_args["LastKeyPair"] == "test-keypair"
+    assert call_args["LastInstanceProfile"] == "devbox-profile"
 
 
 def test_update_instance_status_invalid_status(mock_table):
@@ -396,6 +458,7 @@ def test_update_instance_status_invalid_status(mock_table):
             "ami-12345",
             "t3.medium",
             "test-keypair",
+            "devbox-profile",
         )
 
 
@@ -929,6 +992,121 @@ def test_launch_programmatic_uses_last_instance_type(
     mock_launch_azs.assert_called_once()
     call_args = mock_launch_azs.call_args[1]
     assert call_args["instance_type"] == "m5.large"
+
+
+@patch("devbox.launch.initialize_aws_clients")
+@patch("devbox.launch.get_launch_config")
+@patch("devbox.launch.validate_project_status")
+@patch("devbox.launch.determine_ami")
+@patch("devbox.launch.get_volume_info")
+@patch("devbox.launch.get_launch_template_info")
+@patch("devbox.launch.launch_instance_in_azs")
+@patch("devbox.launch.update_instance_status")
+@patch("devbox.launch.display_instance_info")
+def test_launch_programmatic_uses_last_instance_profile(
+    mock_display,
+    mock_update,
+    mock_launch_azs,
+    mock_get_lt_info,
+    mock_get_vol_info,
+    mock_determine_ami,
+    mock_validate,
+    mock_get_config,
+    mock_init_aws,
+):
+    """Test programmatic launch uses last instance profile when none specified."""
+    mock_aws = {"ec2": MagicMock(), "ec2_resource": MagicMock()}
+    mock_init_aws.return_value = mock_aws
+
+    mock_config = {
+        "lt_ids": ["lt-12345"],
+        "table": MagicMock(),
+        "item": {
+            "Status": "READY",
+            "LastInstanceType": "t3.medium",
+            "LastKeyPair": "test-keypair",
+            "LastInstanceProfile": "previous-profile",
+        },
+    }
+    mock_get_config.return_value = mock_config
+    mock_validate.return_value = "READY"
+    mock_determine_ami.return_value = "ami-12345"
+    mock_get_vol_info.return_value = ([], 0)
+    mock_get_lt_info.return_value = {"lt-12345": {"name": "us-east-1a"}}
+
+    mock_instance = MagicMock()
+    mock_instance.meta.data = {"State": {"Name": "running"}}
+    mock_launch_azs.return_value = (
+        mock_instance,
+        "i-12345",
+        {"State": {"Name": "running"}},
+    )
+
+    launch_programmatic("test-project", instance_type="t3.medium", key_pair="test-keypair")
+
+    mock_launch_azs.assert_called_once()
+    call_args = mock_launch_azs.call_args[1]
+    assert call_args["instance_profile"] == "previous-profile"
+
+
+@patch("devbox.launch.initialize_aws_clients")
+@patch("devbox.launch.get_launch_config")
+@patch("devbox.launch.validate_project_status")
+@patch("devbox.launch.determine_ami")
+@patch("devbox.launch.get_volume_info")
+@patch("devbox.launch.get_launch_template_info")
+@patch("devbox.launch.launch_instance_in_azs")
+@patch("devbox.launch.update_instance_status")
+@patch("devbox.launch.display_instance_info")
+def test_launch_programmatic_uses_specified_instance_profile(
+    mock_display,
+    mock_update,
+    mock_launch_azs,
+    mock_get_lt_info,
+    mock_get_vol_info,
+    mock_determine_ami,
+    mock_validate,
+    mock_get_config,
+    mock_init_aws,
+):
+    """Test programmatic launch uses specified instance profile when provided."""
+    mock_aws = {"ec2": MagicMock(), "ec2_resource": MagicMock()}
+    mock_init_aws.return_value = mock_aws
+
+    mock_config = {
+        "lt_ids": ["lt-12345"],
+        "table": MagicMock(),
+        "item": {
+            "Status": "READY",
+            "LastInstanceType": "t3.medium",
+            "LastKeyPair": "test-keypair",
+            "LastInstanceProfile": "previous-profile",
+        },
+    }
+    mock_get_config.return_value = mock_config
+    mock_validate.return_value = "READY"
+    mock_determine_ami.return_value = "ami-12345"
+    mock_get_vol_info.return_value = ([], 0)
+    mock_get_lt_info.return_value = {"lt-12345": {"name": "us-east-1a"}}
+
+    mock_instance = MagicMock()
+    mock_instance.meta.data = {"State": {"Name": "running"}}
+    mock_launch_azs.return_value = (
+        mock_instance,
+        "i-12345",
+        {"State": {"Name": "running"}},
+    )
+
+    launch_programmatic(
+        "test-project",
+        instance_type="t3.medium",
+        key_pair="test-keypair",
+        instance_profile="custom-profile",
+    )
+
+    mock_launch_azs.assert_called_once()
+    call_args = mock_launch_azs.call_args[1]
+    assert call_args["instance_profile"] == "custom-profile"
 
 
 @patch("devbox.launch.initialize_aws_clients")

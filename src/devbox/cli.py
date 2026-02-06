@@ -73,12 +73,14 @@ def terminate(ctx, instance_id: str):
 @click.argument('project')
 @click.option('--instance-type', help='EC2 instance type (uses last instance type if not specified)')
 @click.option('--key-pair', help='SSH key pair name (uses last keypair if not specified)')
+@click.option('--instance-profile', help='IAM instance profile name or ARN (uses last instance profile if not specified)')
 @click.option('--volume-size', type=int, default=0, help='Root volume size in GB')
 @click.option('--base-ami', help='Base AMI ID for new instances')
 @click.option('--param-prefix', default='/devbox', help='SSM parameter prefix')
 @click.pass_context
 def launch(ctx, project: str, instance_type: Optional[str], key_pair: Optional[str],
-          volume_size: int, base_ami: Optional[str], param_prefix: str):
+          instance_profile: Optional[str], volume_size: int, base_ami: Optional[str],
+          param_prefix: str):
     """Launch a new DevBox instance.
 
     PROJECT is the name of the project to launch.
@@ -92,6 +94,7 @@ def launch(ctx, project: str, instance_type: Optional[str], key_pair: Optional[s
             project=project,
             instance_type=instance_type,
             key_pair=key_pair,
+            instance_profile=instance_profile,
             volume_size=volume_size,
             base_ami=base_ami,
             param_prefix=param_prefix

@@ -265,6 +265,7 @@ def launch_instance(
     volumes: List[Dict[str, Any]],
     project: str,
     az_name: str,
+    instance_profile: str = "",
 ) -> Tuple[Optional[Any], Optional[str], Optional[Exception]]:
     """Attempt to launch an EC2 instance in the specified AZ.
 
@@ -278,6 +279,7 @@ def launch_instance(
         volumes: List of volume mappings
         project: Project name for tagging
         az_name: Availability zone name for logging
+        instance_profile: Optional instance profile name or ARN to override launch template
 
     Returns:
         Tuple of (instance, instance_id, error) where:
@@ -299,19 +301,18 @@ def launch_instance(
             {"Key": "AvailabilityZone", "Value": az_name}
         ]
 
-        # Launch the instance
-        resp = ec2.run_instances(
-            LaunchTemplate={
+        run_args: Dict[str, Any] = {
+            "LaunchTemplate": {
                 "LaunchTemplateId": launch_template_id,
                 "Version": "$Latest",
             },
-            ImageId=image_id,
-            InstanceType=instance_type,
-            MinCount=1,
-            MaxCount=1,
-            KeyName=key_name,
-            BlockDeviceMappings=volumes,
-            TagSpecifications=[
+            "ImageId": image_id,
+            "InstanceType": instance_type,
+            "MinCount": 1,
+            "MaxCount": 1,
+            "KeyName": key_name,
+            "BlockDeviceMappings": volumes,
+            "TagSpecifications": [
                 {
                     "ResourceType": "instance",
                     "Tags": common_tags
@@ -329,7 +330,16 @@ def launch_instance(
                     "Tags": common_tags
                 }
             ],
-        )
+        }
+
+        if instance_profile:
+            if instance_profile.startswith("arn:"):
+                run_args["IamInstanceProfile"] = {"Arn": instance_profile}
+            else:
+                run_args["IamInstanceProfile"] = {"Name": instance_profile}
+
+        # Launch the instance
+        resp = ec2.run_instances(**run_args)
 
         # Get instance details from response
         instance_dct = resp["Instances"][0]
@@ -357,6 +367,7 @@ def update_instance_status(
     image_id: str,
     instance_type: str,
     key_pair: str,
+    instance_profile: str,
     instance_info: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Update the instance status in DynamoDB.
@@ -369,6 +380,7 @@ def update_instance_status(
         image_id: AMI ID used for the instance
         instance_type: EC2 instance type used for the instance
         key_pair: Name of the EC2 Key Pair used for SSH access
+        instance_profile: Instance profile name or ARN (empty string if not set)
         instance_info: Optional instance metadata
 
     Raises:
@@ -385,6 +397,7 @@ def update_instance_status(
                 "InstanceId": instance_id,
                 "LastInstanceType": instance_type,
                 "LastKeyPair": key_pair,
+                "LastInstanceProfile": instance_profile,
                 "VirtualizationType": instance_info.get("VirtualizationType"),
                 "Architecture": instance_info.get("Architecture"),
                 "VolumeCount": len(instance_info.get("BlockDeviceMappings", [])),
@@ -420,6 +433,7 @@ def update_instance_status(
                 "InstanceId": instance_id,
                 "LastInstanceType": instance_type,
                 "LastKeyPair": key_pair,
+                "LastInstanceProfile": instance_profile,
                 "LastUpdated": str(utils.get_utc_now()),
                 "State": "launching",
                 "Username": existing_item.get("Username", "")  # Preserve existing username
@@ -456,6 +470,7 @@ def update_instance_status(
                     AMI = :ami,
                     LastInstanceType = :last_instance_type,
                     LastKeyPair = :last_key_pair,
+                    LastInstanceProfile = :last_instance_profile,
                     LastUpdated = :now,
                     #st = :state
             """
@@ -471,6 +486,7 @@ def update_instance_status(
                 ":ami": image_id,
                 ":last_instance_type": instance_type,
                 ":last_key_pair": key_pair,
+                ":last_instance_profile": instance_profile,
                 ":now": str(utils.get_utc_now()),
                 ":state": "running"
             }
@@ -684,7 +700,8 @@ def launch_instance_in_azs(
     instance_type: str,
     key_name: str,
     volumes: List[Dict[str, Any]],
-    project: str
+    project: str,
+    instance_profile: str = "",
 ) -> Tuple[Any, str, Dict[str, Any]]:
     """Attempt to launch an instance in any of the specified AZs.
 
@@ -697,6 +714,7 @@ def launch_instance_in_azs(
         key_name: Name of the key pair for SSH access
         volumes: List of volume mappings
         project: Project name for tagging
+        instance_profile: Optional instance profile name or ARN to override launch template
 
     Returns:
         Tuple of (instance, instance_id, instance_info) on success
@@ -719,6 +737,7 @@ def launch_instance_in_azs(
                 volumes=volumes,
                 project=project,
                 az_name=az_name,
+                instance_profile=instance_profile,
             )
 
             if instance and instance_id:
@@ -823,6 +842,7 @@ def launch_programmatic(
     project: str,
     instance_type: Optional[str] = None,
     key_pair: Optional[str] = None,
+    instance_profile: Optional[str] = None,
     volume_size: int = 0,
     base_ami: Optional[str] = None,
     param_prefix: str = "/devbox"
@@ -833,6 +853,7 @@ def launch_programmatic(
         project: Project name (alphanumeric and hyphens only)
         instance_type: EC2 instance type (e.g., t3.medium, m5.large) (uses last instance type if None)
         key_pair: Name of the EC2 Key Pair for SSH access (uses last keypair if None)
+        instance_profile: Instance profile name or ARN (uses last instance profile if None)
         volume_size: Minimum size (GiB) for the root EBS volume
         base_ami: Base AMI ID (only required for new projects)
         param_prefix: Prefix for AWS Systems Manager Parameter Store keys
@@ -875,6 +896,22 @@ def launch_programmatic(
         else:
             print(f"Using specified keypair: {key_pair}")
 
+        # Determine which instance profile to use
+        if instance_profile is None:
+            last_instance_profile = config["item"].get("LastInstanceProfile", "")
+            if last_instance_profile:
+                instance_profile = last_instance_profile
+                print(f"Using last instance profile: {instance_profile}")
+            else:
+                instance_profile = ""
+                print("Using launch template instance profile")
+        else:
+            instance_profile = instance_profile.strip()
+            if instance_profile:
+                print(f"Using specified instance profile: {instance_profile}")
+            else:
+                print("Using launch template instance profile")
+
         # Determine which AMI to use
         image_id = determine_ami(config["item"], base_ami)
         print(f"Using AMI: {image_id}")
@@ -895,7 +932,8 @@ def launch_programmatic(
             instance_type=instance_type,
             key_name=key_pair,
             volumes=volumes,
-            project=project
+            project=project,
+            instance_profile=instance_profile
         )
 
         # Wait for instance to be running
@@ -935,6 +973,7 @@ def launch_programmatic(
             image_id=image_id,
             instance_type=instance_type,
             key_pair=key_pair,
+            instance_profile=instance_profile,
             instance_info=instance_info,
         )
 
