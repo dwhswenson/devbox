@@ -925,6 +925,18 @@ class TestNewCommand:
         assert result.exit_code == 2
         assert "Missing argument 'PROJECT'" in result.output
 
+    @patch("devbox.new.new_project_programmatic")
+    def test_new_rejects_invalid_param_prefix(self, mock_new):
+        result = self.runner.invoke(
+            cli,
+            ["new", "test-project", "--base-ami", "ami-12345678", "--param-prefix", "devbox"],
+        )
+
+        assert result.exit_code == 2
+        assert "Invalid value for '--param-prefix'" in result.output
+        assert "must start with '/'" in result.output
+        mock_new.assert_not_called()
+
 
 @patch("devbox.cli.cli")
 def test_main_calls_cli(mock_cli):
@@ -1282,4 +1294,25 @@ class TestParamPrefixEnvironmentOverrides:
             userdata_file=None,
             assign_dns=True,
             dns_subdomain=None,
+        )
+
+    @patch("devbox.new.new_project_programmatic")
+    @patch("devbox.cli.ConsoleOutput")
+    def test_new_uses_param_prefix_from_env(self, mock_console_class, mock_new):
+        mock_console = MagicMock()
+        mock_console_class.return_value = mock_console
+
+        result = self.runner.invoke(
+            cli,
+            ["new", "test-project", "--base-ami", "ami-12345678"],
+            env={"DEVBOX_PARAM_PREFIX": "/env/devbox"},
+        )
+
+        assert result.exit_code == 0
+        mock_new.assert_called_once_with(
+            project="test-project",
+            base_ami="ami-12345678",
+            instance_type=None,
+            key_pair=None,
+            param_prefix="/env/devbox",
         )

@@ -255,11 +255,30 @@ def test_new_project_programmatic_invalid_ami():
         new_project_programmatic(project="my-project", base_ami="not-an-ami")
 
 
-def test_new_project_programmatic_invalid_param_prefix():
-    with pytest.raises(ValueError, match="Parameter prefix must start with '/'"):
-        new_project_programmatic(
-            project="my-project", base_ami="ami-12345678", param_prefix="devbox"
-        )
+@patch("devbox.new.create_project_entry")
+@patch("devbox.new.check_project_exists")
+@patch("devbox.new.get_dynamodb_table")
+@patch("devbox.new.validate_ami_exists")
+@patch("devbox.new.initialize_aws_clients")
+def test_new_project_programmatic_passes_through_param_prefix(
+    mock_init_aws,
+    mock_validate_ami,
+    mock_get_table,
+    mock_check_exists,
+    mock_create_entry,
+):
+    aws = {"ec2": MagicMock()}
+    mock_init_aws.return_value = aws
+    mock_validate_ami.return_value = {"ImageId": "ami-12345678"}
+    mock_get_table.return_value = MagicMock()
+    mock_check_exists.return_value = None
+
+    new_project_programmatic(
+        project="my-project", base_ami="ami-12345678", param_prefix="devbox"
+    )
+
+    mock_get_table.assert_called_once_with(aws, "devbox")
+    mock_create_entry.assert_called_once()
 
 
 @patch("devbox.new.create_project_entry")

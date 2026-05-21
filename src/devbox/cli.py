@@ -14,12 +14,26 @@ DEFAULT_PARAM_PREFIX = "/devbox"
 PARAM_PREFIX_ENV_VAR = "DEVBOX_PARAM_PREFIX"
 
 
+def _validate_param_prefix(
+    _ctx: click.Context, _param: click.Parameter, value: str
+) -> str:
+    """Validate shared ``--param-prefix`` values for the Click CLI."""
+    if not value.startswith("/"):
+        raise click.BadParameter("must start with '/'")
+    if value.endswith("/"):
+        raise click.BadParameter("cannot end with '/'")
+    if "//" in value:
+        raise click.BadParameter("cannot contain consecutive slashes")
+    return value
+
+
 def param_prefix_option(func):
     """Add shared --param-prefix option with env var support."""
     return click.option(
         "--param-prefix",
         default=DEFAULT_PARAM_PREFIX,
         envvar=PARAM_PREFIX_ENV_VAR,
+        callback=_validate_param_prefix,
         show_default=True,
         show_envvar=True,
         help="SSM parameter prefix",
@@ -168,7 +182,7 @@ def launch(
 @click.option('--base-ami', required=True, help='Base AMI ID for the project')
 @click.option('--instance-type', help='Default EC2 instance type for future launches')
 @click.option('--key-pair', help='Default SSH key pair name for future launches')
-@click.option('--param-prefix', default='/devbox', help='SSM parameter prefix')
+@param_prefix_option
 @click.pass_context
 def new(
     ctx,
