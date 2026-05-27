@@ -231,6 +231,13 @@ def test_new_project_programmatic_invalid_project_name():
         new_project_programmatic(project="", base_ami="ami-12345678")
 
 
+def test_new_project_programmatic_rejects_underscore_in_project_name():
+    with pytest.raises(
+        ValueError, match="Project name must be alphanumeric with optional hyphens"
+    ):
+        new_project_programmatic(project="my_project", base_ami="ami-12345678")
+
+
 def test_new_project_programmatic_invalid_ami():
     with pytest.raises(ValueError, match="Base AMI must be a valid AMI ID"):
         new_project_programmatic(project="my-project", base_ami="not-an-ami")
@@ -242,7 +249,7 @@ def test_new_project_programmatic_invalid_ami():
 @patch("devbox.new.initialize_aws_clients")
 @patch("devbox.new.utils.get_dynamodb_table")
 @patch("devbox.new.utils.get_ssm_parameter")
-def test_new_project_programmatic_passes_through_param_prefix(
+def test_new_project_programmatic_normalizes_slashless_param_prefix(
     mock_get_ssm_parameter,
     mock_get_dynamodb_table,
     mock_init_aws,
@@ -262,12 +269,57 @@ def test_new_project_programmatic_passes_through_param_prefix(
     )
 
     mock_get_ssm_parameter.assert_called_once_with(
-        "devbox/snapshotTable", ssm_client=aws["ssm"]
+        "/devbox/snapshotTable", ssm_client=aws["ssm"]
     )
     mock_get_dynamodb_table.assert_called_once_with(
         "snapshot-table", dynamodb_resource=aws["ddb"]
     )
     mock_create_entry.assert_called_once()
+
+
+@patch("devbox.new.create_project_entry")
+@patch("devbox.new.check_project_exists")
+@patch("devbox.new.validate_ami_exists")
+@patch("devbox.new.initialize_aws_clients")
+@patch("devbox.new.utils.get_dynamodb_table")
+@patch("devbox.new.utils.get_ssm_parameter")
+def test_new_project_programmatic_strips_trailing_slash_from_param_prefix(
+    mock_get_ssm_parameter,
+    mock_get_dynamodb_table,
+    mock_init_aws,
+    mock_validate_ami,
+    mock_check_exists,
+    mock_create_entry,
+):
+    aws = {"ec2": MagicMock(), "ssm": MagicMock(), "ddb": MagicMock()}
+    mock_init_aws.return_value = aws
+    mock_validate_ami.return_value = {"ImageId": "ami-12345678"}
+    mock_get_ssm_parameter.return_value = "snapshot-table"
+    mock_get_dynamodb_table.return_value = MagicMock()
+    mock_check_exists.return_value = None
+
+    new_project_programmatic(
+        project="my-project", base_ami="ami-12345678", param_prefix="/devbox/"
+    )
+
+    mock_get_ssm_parameter.assert_called_once_with(
+        "/devbox/snapshotTable", ssm_client=aws["ssm"]
+    )
+    mock_get_dynamodb_table.assert_called_once_with(
+        "snapshot-table", dynamodb_resource=aws["ddb"]
+    )
+    mock_create_entry.assert_called_once()
+
+
+def test_new_project_programmatic_rejects_consecutive_slashes_in_param_prefix():
+    with pytest.raises(
+        ValueError, match="Parameter prefix cannot contain consecutive slashes"
+    ):
+        new_project_programmatic(
+            project="my-project",
+            base_ami="ami-12345678",
+            param_prefix="/devbox//nested",
+        )
 
 
 @patch("devbox.new.create_project_entry")

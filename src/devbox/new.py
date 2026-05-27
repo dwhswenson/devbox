@@ -12,6 +12,7 @@ from typing import Dict, Any, Optional, TYPE_CHECKING
 
 from botocore.exceptions import ClientError
 
+from .remote_client import normalize_param_prefix
 from . import utils
 from .utils import ResourceNotFoundError, AWSClientError
 
@@ -203,8 +204,8 @@ def new_project_programmatic(
     if not project:
         raise ValueError("Project name cannot be empty")
 
-    if not project.replace('-', '').replace('_', '').isalnum():
-        raise ValueError("Project name must be alphanumeric with optional hyphens and underscores")
+    if not project.replace('-', '').isalnum():
+        raise ValueError("Project name must be alphanumeric with optional hyphens")
 
     if len(project) < 1 or len(project) > 50:
         raise ValueError("Project name must be between 1 and 50 characters")
@@ -224,6 +225,8 @@ def new_project_programmatic(
 
     if len(base_ami) < 12:  # ami- + at least 8 characters
         raise ValueError("Base AMI ID appears to be too short to be valid")
+
+    param_prefix = normalize_param_prefix(param_prefix)
 
     print(f"Creating new project: {project}")
     print(f"Base AMI: {base_ami}")

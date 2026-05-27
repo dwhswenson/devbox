@@ -15,10 +15,24 @@ from devbox.remote_client import (
     get_cli_function_url,
     get_function_url_region,
     invoke_action,
+    normalize_param_prefix,
 )
 
 
 FUNCTION_URL = "https://abc123.lambda-url.us-east-1.on.aws/"
+
+
+def test_normalize_param_prefix_adds_leading_slash():
+    assert normalize_param_prefix("devbox") == "/devbox"
+
+
+def test_normalize_param_prefix_strips_trailing_slash():
+    assert normalize_param_prefix("/devbox/") == "/devbox"
+
+
+def test_normalize_param_prefix_rejects_consecutive_slashes():
+    with pytest.raises(ValueError, match="Parameter prefix cannot contain consecutive slashes"):
+        normalize_param_prefix("/devbox//nested")
 
 
 def test_get_cli_function_url_uses_expected_parameter_name():

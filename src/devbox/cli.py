@@ -7,6 +7,7 @@ import sys
 import click
 from typing import Optional
 
+from .remote_client import normalize_param_prefix
 from .commands.status import run_status_command
 from .devbox_manager import DevBoxManager
 from .console_output import ConsoleOutput
@@ -18,14 +19,11 @@ PARAM_PREFIX_ENV_VAR = "DEVBOX_PARAM_PREFIX"
 def _validate_param_prefix(
     _ctx: click.Context, _param: click.Parameter, value: str
 ) -> str:
-    """Validate shared ``--param-prefix`` values for the Click CLI."""
-    if not value.startswith("/"):
-        raise click.BadParameter("must start with '/'")
-    if value.endswith("/"):
-        raise click.BadParameter("cannot end with '/'")
-    if "//" in value:
-        raise click.BadParameter("cannot contain consecutive slashes")
-    return value
+    """Normalize and validate shared ``--param-prefix`` values."""
+    try:
+        return normalize_param_prefix(value)
+    except ValueError as exc:
+        raise click.BadParameter(str(exc)) from exc
 
 
 def param_prefix_option(func):

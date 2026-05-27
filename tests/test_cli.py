@@ -902,15 +902,43 @@ class TestNewCommand:
         assert "Missing argument 'PROJECT'" in result.output
 
     @patch("devbox.new.new_project_programmatic")
-    def test_new_rejects_invalid_param_prefix(self, mock_new):
+    @patch("devbox.cli.ConsoleOutput")
+    def test_new_normalizes_slashless_param_prefix(
+        self, mock_console_class, mock_new
+    ):
+        mock_console_class.return_value = MagicMock()
+
         result = self.runner.invoke(
             cli,
             ["new", "test-project", "--base-ami", "ami-12345678", "--param-prefix", "devbox"],
         )
 
+        assert result.exit_code == 0
+        mock_new.assert_called_once_with(
+            project="test-project",
+            base_ami="ami-12345678",
+            instance_type=None,
+            key_pair=None,
+            param_prefix="/devbox",
+        )
+
+    @patch("devbox.new.new_project_programmatic")
+    def test_new_rejects_param_prefix_with_consecutive_slashes(self, mock_new):
+        result = self.runner.invoke(
+            cli,
+            [
+                "new",
+                "test-project",
+                "--base-ami",
+                "ami-12345678",
+                "--param-prefix",
+                "/devbox//nested",
+            ],
+        )
+
         assert result.exit_code == 2
         assert "Invalid value for '--param-prefix'" in result.output
-        assert "must start with '/'" in result.output
+        assert "cannot contain consecutive slashes" in result.output
         mock_new.assert_not_called()
 
 
