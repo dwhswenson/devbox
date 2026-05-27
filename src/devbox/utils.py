@@ -80,6 +80,38 @@ def get_ssm_parameter(
         return ""
 
 
+def get_image(
+    image_id: str, ec2_client: Optional[BaseClient] = None
+) -> Optional[Dict[str, Any]]:
+    """Look up a single EC2 image and normalize missing-image cases.
+
+    Args:
+        image_id: AMI ID to fetch
+        ec2_client: Optional pre-configured EC2 client
+
+    Returns:
+        The first matching image dictionary, or None if the image does not exist
+
+    Raises:
+        ClientError: If AWS returns an error other than an invalid or missing AMI
+    """
+    ec2 = ec2_client or get_ec2_client()
+
+    try:
+        response = ec2.describe_images(ImageIds=[image_id])
+    except ClientError as e:
+        error_code = e.response.get("Error", {}).get("Code", "")
+        if error_code.startswith("InvalidAMIID"):
+            return None
+        raise
+
+    images = response.get("Images", [])
+    if not images:
+        return None
+
+    return images[0]
+
+
 def get_project_tag(tags: List[Dict[str, str]]) -> str:
     """Extract the Project tag value from a list of tags.
 

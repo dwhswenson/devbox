@@ -14,6 +14,7 @@ from devbox.utils import (
     get_ec2_resource,
     get_dynamodb_resource,
     get_dynamodb_table,
+    get_image,
     get_ssm_parameter,
     get_project_tag,
     format_timedelta,
@@ -95,6 +96,50 @@ def test_get_ssm_parameter_with_injected_client():
     mock_ssm.get_parameter.assert_called_once_with(
         Name="/test/param", WithDecryption=True
     )
+
+
+def test_get_image_with_injected_client():
+    mock_ec2 = MagicMock()
+    mock_ec2.describe_images.return_value = {
+        "Images": [{"ImageId": "ami-12345678", "Name": "test-image"}]
+    }
+
+    image = get_image("ami-12345678", ec2_client=mock_ec2)
+
+    assert image == {"ImageId": "ami-12345678", "Name": "test-image"}
+    mock_ec2.describe_images.assert_called_once_with(ImageIds=["ami-12345678"])
+
+
+def test_get_image_returns_none_for_empty_result():
+    mock_ec2 = MagicMock()
+    mock_ec2.describe_images.return_value = {"Images": []}
+
+    image = get_image("ami-12345678", ec2_client=mock_ec2)
+
+    assert image is None
+
+
+def test_get_image_returns_none_for_invalid_ami():
+    mock_ec2 = MagicMock()
+    mock_ec2.describe_images.side_effect = ClientError(
+        {"Error": {"Code": "InvalidAMIID.NotFound", "Message": "Not found"}},
+        "DescribeImages",
+    )
+
+    image = get_image("ami-12345678", ec2_client=mock_ec2)
+
+    assert image is None
+
+
+def test_get_image_reraises_other_client_error():
+    mock_ec2 = MagicMock()
+    mock_ec2.describe_images.side_effect = ClientError(
+        {"Error": {"Code": "AccessDenied", "Message": "Denied"}},
+        "DescribeImages",
+    )
+
+    with pytest.raises(ClientError):
+        get_image("ami-12345678", ec2_client=mock_ec2)
 
 def test_get_ssm_parameter_not_found_required(mock_ssm):
     param_name = "/nonexistent/param"

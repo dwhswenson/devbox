@@ -73,17 +73,11 @@ def validate_ami_exists(ec2_client: Any, ami_id: str) -> Dict[str, Any]:
         Raised for other AWS API failures, such as permission errors.
     """
     try:
-        response = ec2_client.describe_images(ImageIds=[ami_id])
-        images = response.get('Images', [])
-
-        if not images:
+        image = utils.get_image(ami_id, ec2_client=ec2_client)
+        if image is None:
             raise ResourceNotFoundError(f"AMI {ami_id} not found")
-
-        return images[0]
+        return image
     except ClientError as e:
-        error_code = e.response.get('Error', {}).get('Code')
-        if error_code == 'InvalidAMIID.NotFound':
-            raise ResourceNotFoundError(f"AMI {ami_id} not found")
         raise AWSClientError(f"Error validating AMI {ami_id}: {str(e)}") from e
 
 

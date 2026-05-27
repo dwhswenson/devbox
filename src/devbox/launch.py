@@ -167,7 +167,7 @@ def get_volume_info(
         ValueError: If the image is not found or invalid
     """
     try:
-        resp = ec2.describe_images(ImageIds=[image_id])
+        image = utils.get_image(image_id, ec2_client=ec2)
     except ClientError as e:
         raise AWSClientError(
             f"Error fetching image details for {image_id}",
@@ -175,10 +175,8 @@ def get_volume_info(
             original_exception=e,
         )
 
-    if not resp.get("Images"):
+    if image is None:
         raise ValueError(f"AMI {image_id} not found")
-
-    image = resp["Images"][0]
     volumes = image.get("BlockDeviceMappings", []).copy()
 
     # Find the largest volume
@@ -860,9 +858,8 @@ def display_instance_info(ec2: Any, instance_id: str, project: str, table: Any) 
                         ami_id = resp["Item"].get("AMI", "")
                         if ami_id:
                             try:
-                                ami_resp = ec2.describe_images(ImageIds=[ami_id])
-                                if ami_resp.get("Images"):
-                                    ami = ami_resp["Images"][0]
+                                ami = utils.get_image(ami_id, ec2_client=ec2)
+                                if ami is not None:
                                     ami_name = ami.get("Name", "")
                                     ami_description = ami.get("Description", "")
                                     determined_username = determine_ssh_username(
@@ -880,6 +877,8 @@ def display_instance_info(ec2: Any, instance_id: str, project: str, table: Any) 
                                         username = (
                                             "<username>"  # placeholder for unknown
                                         )
+                                else:
+                                    username = "<username>"
                             except Exception:
                                 username = "<username>"
                         else:
@@ -1054,9 +1053,8 @@ def launch_programmatic(
                 existing_username = resp["Item"].get("Username", "")
                 if not existing_username:
                     # Determine username from AMI
-                    ami_resp = aws["ec2"].describe_images(ImageIds=[image_id])
-                    if ami_resp.get("Images"):
-                        ami = ami_resp["Images"][0]
+                    ami = utils.get_image(image_id, ec2_client=aws["ec2"])
+                    if ami is not None:
                         ami_name = ami.get("Name", "")
                         ami_description = ami.get("Description", "")
                         determined_username = determine_ssh_username(
@@ -1069,6 +1067,10 @@ def launch_programmatic(
                                 UpdateExpression="SET Username = :u",
                                 ExpressionAttributeValues={":u": determined_username},
                             )
+                    else:
+                        print(
+                            f"Warning: Could not determine SSH username: AMI {image_id} not found"
+                        )
         except Exception as e:
             print(f"Warning: Could not determine SSH username: {e}")
 
