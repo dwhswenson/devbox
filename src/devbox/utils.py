@@ -36,25 +36,33 @@ def get_dynamodb_resource() -> ServiceResource:
     return boto3.resource('dynamodb')
 
 
-def get_dynamodb_table(table_name: str) -> Any:
+def get_dynamodb_table(
+    table_name: str, dynamodb_resource: Optional[ServiceResource] = None
+) -> Any:
     """Get a DynamoDB table resource.
 
     Args:
         table_name: Name of the DynamoDB table
+        dynamodb_resource: Optional pre-configured DynamoDB resource
 
     Returns:
         A DynamoDB Table resource
     """
-    dynamodb = get_dynamodb_resource()
+    dynamodb = dynamodb_resource or get_dynamodb_resource()
     return dynamodb.Table(table_name)
 
 
-def get_ssm_parameter(parameter_name: str, required: bool = True) -> str:
+def get_ssm_parameter(
+    parameter_name: str,
+    required: bool = True,
+    ssm_client: Optional[BaseClient] = None,
+) -> str:
     """Get a parameter from SSM Parameter Store.
 
     Args:
         parameter_name: Name of the parameter to fetch
         required: If True, raises an exception if parameter is not found
+        ssm_client: Optional pre-configured SSM client
 
     Returns:
         The parameter value as a string
@@ -63,7 +71,7 @@ def get_ssm_parameter(parameter_name: str, required: bool = True) -> str:
         ValueError: If parameter is not found and required is True
     """
     try:
-        ssm = get_ssm_client()
+        ssm = ssm_client or get_ssm_client()
         response = ssm.get_parameter(Name=parameter_name, WithDecryption=True)
         return response['Parameter']['Value']
     except (ClientError, KeyError) as e:

@@ -9,7 +9,6 @@ from botocore.exceptions import ClientError
 from devbox.new import (
     initialize_aws_clients,
     validate_ami_exists,
-    get_dynamodb_table,
     check_project_exists,
     create_project_entry,
     new_project_programmatic,
@@ -25,9 +24,9 @@ def _client_error(code: str, message: str, operation: str) -> ClientError:
     )
 
 
-@patch("devbox.new.get_dynamodb_resource")
-@patch("devbox.new.get_ec2_client")
-@patch("devbox.new.get_ssm_client")
+@patch("devbox.new.utils.get_dynamodb_resource")
+@patch("devbox.new.utils.get_ec2_client")
+@patch("devbox.new.utils.get_ssm_client")
 def test_initialize_aws_clients_success(mock_ssm, mock_ec2, mock_ddb):
     mock_ssm.return_value = MagicMock()
     mock_ec2.return_value = MagicMock()
@@ -40,7 +39,7 @@ def test_initialize_aws_clients_success(mock_ssm, mock_ec2, mock_ddb):
     assert aws["ddb"] is mock_ddb.return_value
 
 
-@patch("devbox.new.get_ssm_client")
+@patch("devbox.new.utils.get_ssm_client")
 def test_initialize_aws_clients_error(mock_ssm):
     mock_ssm.side_effect = Exception("boom")
 
@@ -85,32 +84,6 @@ def test_validate_ami_exists_other_client_error():
 
     with pytest.raises(AWSClientError):
         validate_ami_exists(mock_ec2, "ami-12345678")
-
-
-def test_get_dynamodb_table_success():
-    mock_table = MagicMock()
-    mock_ssm = MagicMock()
-    mock_ssm.get_parameter.return_value = {"Parameter": {"Value": "snapshot-table"}}
-    mock_ddb = MagicMock()
-    mock_ddb.Table.return_value = mock_table
-    aws = {"ssm": mock_ssm, "ddb": mock_ddb}
-
-    table = get_dynamodb_table(aws, "/devbox")
-
-    assert table is mock_table
-    mock_ssm.get_parameter.assert_called_once_with(
-        Name="/devbox/snapshotTable", WithDecryption=True
-    )
-    mock_ddb.Table.assert_called_once_with("snapshot-table")
-
-
-def test_get_dynamodb_table_error():
-    mock_ssm = MagicMock()
-    mock_ssm.get_parameter.side_effect = Exception("missing")
-    aws = {"ssm": mock_ssm, "ddb": MagicMock()}
-
-    with pytest.raises(AWSClientError):
-        get_dynamodb_table(aws, "/devbox")
 
 
 def test_check_project_exists_returns_item():
@@ -208,20 +181,23 @@ def test_create_project_entry_without_launch_defaults():
 
 @patch("devbox.new.create_project_entry")
 @patch("devbox.new.check_project_exists")
-@patch("devbox.new.get_dynamodb_table")
 @patch("devbox.new.validate_ami_exists")
 @patch("devbox.new.initialize_aws_clients")
+@patch("devbox.new.utils.get_dynamodb_table")
+@patch("devbox.new.utils.get_ssm_parameter")
 def test_new_project_programmatic_success(
+    mock_get_ssm_parameter,
+    mock_get_dynamodb_table,
     mock_init_aws,
     mock_validate_ami,
-    mock_get_table,
     mock_check_exists,
     mock_create_entry,
 ):
-    aws = {"ec2": MagicMock()}
+    aws = {"ec2": MagicMock(), "ssm": MagicMock(), "ddb": MagicMock()}
     mock_init_aws.return_value = aws
+    mock_get_ssm_parameter.return_value = "snapshot-table"
     mock_validate_ami.return_value = {"ImageId": "ami-12345678", "Architecture": "x86_64"}
-    mock_get_table.return_value = MagicMock()
+    mock_get_dynamodb_table.return_value = MagicMock()
     mock_check_exists.return_value = None
 
     new_project_programmatic(
@@ -234,10 +210,15 @@ def test_new_project_programmatic_success(
 
     mock_init_aws.assert_called_once()
     mock_validate_ami.assert_called_once_with(aws["ec2"], "ami-12345678")
-    mock_get_table.assert_called_once_with(aws, "/devbox")
+    mock_get_ssm_parameter.assert_called_once_with(
+        "/devbox/snapshotTable", ssm_client=aws["ssm"]
+    )
+    mock_get_dynamodb_table.assert_called_once_with(
+        "snapshot-table", dynamodb_resource=aws["ddb"]
+    )
     mock_check_exists.assert_called_once()
     mock_create_entry.assert_called_once_with(
-        table=mock_get_table.return_value,
+        table=mock_get_dynamodb_table.return_value,
         project_name="my-project",
         ami_info=mock_validate_ami.return_value,
         instance_type="m5.large",
@@ -257,45 +238,60 @@ def test_new_project_programmatic_invalid_ami():
 
 @patch("devbox.new.create_project_entry")
 @patch("devbox.new.check_project_exists")
-@patch("devbox.new.get_dynamodb_table")
 @patch("devbox.new.validate_ami_exists")
 @patch("devbox.new.initialize_aws_clients")
+@patch("devbox.new.utils.get_dynamodb_table")
+@patch("devbox.new.utils.get_ssm_parameter")
 def test_new_project_programmatic_passes_through_param_prefix(
+    mock_get_ssm_parameter,
+    mock_get_dynamodb_table,
     mock_init_aws,
     mock_validate_ami,
-    mock_get_table,
     mock_check_exists,
     mock_create_entry,
 ):
-    aws = {"ec2": MagicMock()}
+    aws = {"ec2": MagicMock(), "ssm": MagicMock(), "ddb": MagicMock()}
     mock_init_aws.return_value = aws
     mock_validate_ami.return_value = {"ImageId": "ami-12345678"}
-    mock_get_table.return_value = MagicMock()
+    mock_get_ssm_parameter.return_value = "snapshot-table"
+    mock_get_dynamodb_table.return_value = MagicMock()
     mock_check_exists.return_value = None
 
     new_project_programmatic(
         project="my-project", base_ami="ami-12345678", param_prefix="devbox"
     )
 
-    mock_get_table.assert_called_once_with(aws, "devbox")
+    mock_get_ssm_parameter.assert_called_once_with(
+        "devbox/snapshotTable", ssm_client=aws["ssm"]
+    )
+    mock_get_dynamodb_table.assert_called_once_with(
+        "snapshot-table", dynamodb_resource=aws["ddb"]
+    )
     mock_create_entry.assert_called_once()
 
 
 @patch("devbox.new.create_project_entry")
 @patch("devbox.new.check_project_exists")
-@patch("devbox.new.get_dynamodb_table")
 @patch("devbox.new.validate_ami_exists")
 @patch("devbox.new.initialize_aws_clients")
+@patch("devbox.new.utils.get_dynamodb_table")
+@patch("devbox.new.utils.get_ssm_parameter")
 def test_new_project_programmatic_existing_project(
+    mock_get_ssm_parameter,
+    mock_get_dynamodb_table,
     mock_init_aws,
     mock_validate_ami,
-    mock_get_table,
     mock_check_exists,
     mock_create_entry,
 ):
-    mock_init_aws.return_value = {"ec2": MagicMock()}
+    mock_init_aws.return_value = {
+        "ec2": MagicMock(),
+        "ssm": MagicMock(),
+        "ddb": MagicMock(),
+    }
+    mock_get_ssm_parameter.return_value = "snapshot-table"
     mock_validate_ami.return_value = {"ImageId": "ami-12345678"}
-    mock_get_table.return_value = MagicMock()
+    mock_get_dynamodb_table.return_value = MagicMock()
     mock_check_exists.return_value = {"project": "my-project", "Status": "READY"}
 
     with pytest.raises(ValueError, match="already exists"):

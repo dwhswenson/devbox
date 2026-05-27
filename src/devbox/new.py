@@ -12,15 +12,8 @@ from typing import Dict, Any, Optional, TYPE_CHECKING
 
 from botocore.exceptions import ClientError
 
-# Import local modules
 from . import utils
-from .utils import (
-    get_ssm_client,
-    get_ec2_client,
-    get_dynamodb_resource,
-    ResourceNotFoundError,
-    AWSClientError
-)
+from .utils import ResourceNotFoundError, AWSClientError
 
 if TYPE_CHECKING:
     from mypy_boto3_ec2.client import EC2Client
@@ -49,9 +42,9 @@ def initialize_aws_clients() -> Dict[str, Any]:
     """
     try:
         return {
-            "ssm": get_ssm_client(),
-            "ec2": get_ec2_client(),
-            "ddb": get_dynamodb_resource()
+            "ssm": utils.get_ssm_client(),
+            "ec2": utils.get_ec2_client(),
+            "ddb": utils.get_dynamodb_resource()
         }
     except Exception as e:
         raise AWSClientError(f"Failed to initialize AWS clients: {str(e)}") from e
@@ -92,35 +85,6 @@ def validate_ami_exists(ec2_client: Any, ami_id: str) -> Dict[str, Any]:
         if error_code == 'InvalidAMIID.NotFound':
             raise ResourceNotFoundError(f"AMI {ami_id} not found")
         raise AWSClientError(f"Error validating AMI {ami_id}: {str(e)}") from e
-
-
-def get_dynamodb_table(aws: Dict[str, Any], param_prefix: str) -> Any:
-    """Get the DynamoDB table for storing project information.
-
-    Parameters
-    ----------
-    aws : dict[str, Any]
-        AWS client mapping containing at least ``"ssm"`` and ``"ddb"``.
-    param_prefix : str
-        Prefix for SSM parameters, for example ``"/devbox"``.
-
-    Returns
-    -------
-    Any
-        DynamoDB table resource used for project storage.
-
-    Raises
-    ------
-    AWSClientError
-        Raised when the SSM parameter is missing, the table cannot be
-        resolved, or AWS access fails.
-    """
-    try:
-        table_param = f"{param_prefix}/snapshotTable"
-        table_name = aws["ssm"].get_parameter(Name=table_param, WithDecryption=True)["Parameter"]["Value"]
-        return aws["ddb"].Table(table_name)
-    except Exception as e:
-        raise AWSClientError(f"Failed to get DynamoDB table: {str(e)}") from e
 
 
 def check_project_exists(table: Any, project_name: str) -> Optional[Dict[str, Any]]:
@@ -286,7 +250,13 @@ def new_project_programmatic(
 
     # Get DynamoDB table
     print("Getting DynamoDB table...")
-    table = get_dynamodb_table(aws, param_prefix)
+    try:
+        table_name = utils.get_ssm_parameter(
+            f"{param_prefix}/snapshotTable", ssm_client=aws["ssm"]
+        )
+        table = utils.get_dynamodb_table(table_name, dynamodb_resource=aws["ddb"])
+    except Exception as e:
+        raise AWSClientError(f"Failed to get DynamoDB table: {str(e)}") from e
 
     # Check if project already exists
     print("Checking if project already exists...")

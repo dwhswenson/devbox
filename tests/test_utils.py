@@ -2,6 +2,7 @@
 
 import json
 from datetime import datetime, timedelta, timezone
+from unittest.mock import MagicMock
 # Removed unused imports - using moto fixtures instead
 
 import pytest
@@ -63,6 +64,17 @@ def test_get_dynamodb_table(mock_dynamodb):
     assert table.name == table_name
 
 
+def test_get_dynamodb_table_with_injected_resource():
+    mock_resource = MagicMock()
+    mock_table = MagicMock()
+    mock_resource.Table.return_value = mock_table
+
+    table = get_dynamodb_table("test-table", dynamodb_resource=mock_resource)
+
+    assert table is mock_table
+    mock_resource.Table.assert_called_once_with("test-table")
+
+
 def test_get_ssm_parameter_success(mock_ssm):
     param_name = "/test/param"
     param_value = "test-value"
@@ -71,6 +83,18 @@ def test_get_ssm_parameter_success(mock_ssm):
 
     result = get_ssm_parameter(param_name)
     assert result == param_value
+
+
+def test_get_ssm_parameter_with_injected_client():
+    mock_ssm = MagicMock()
+    mock_ssm.get_parameter.return_value = {"Parameter": {"Value": "test-value"}}
+
+    result = get_ssm_parameter("/test/param", ssm_client=mock_ssm)
+
+    assert result == "test-value"
+    mock_ssm.get_parameter.assert_called_once_with(
+        Name="/test/param", WithDecryption=True
+    )
 
 def test_get_ssm_parameter_not_found_required(mock_ssm):
     param_name = "/nonexistent/param"
