@@ -136,6 +136,8 @@ def create_project_entry(
 
     Raises
     ------
+    ValueError
+        Raised when a project with the same name already exists.
     AWSClientError
         Raised when the ``put_item`` request fails.
     """
@@ -163,8 +165,15 @@ def create_project_entry(
         if key_pair:
             item["LastKeyPair"] = key_pair
 
-        table.put_item(Item=item)
+        table.put_item(
+            Item=item,
+            ConditionExpression="attribute_not_exists(#project)",
+            ExpressionAttributeNames={"#project": "project"},
+        )
     except ClientError as e:
+        error_code = e.response.get("Error", {}).get("Code")
+        if error_code == "ConditionalCheckFailedException":
+            raise ValueError(f"Project '{project_name}' already exists") from e
         raise AWSClientError(f"Failed to create project entry: {str(e)}") from e
 
 

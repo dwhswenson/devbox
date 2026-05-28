@@ -148,7 +148,8 @@ def test_create_project_entry_success(mock_now):
         key_pair="my-key",
     )
 
-    put_item_args = mock_table.put_item.call_args[1]["Item"]
+    put_item_call_args = mock_table.put_item.call_args[1]
+    put_item_args = put_item_call_args["Item"]
     assert put_item_args["project"] == "my-project"
     assert put_item_args["Status"] == "READY"
     assert put_item_args["AMI"] == "ami-12345678"
@@ -158,6 +159,20 @@ def test_create_project_entry_success(mock_now):
     assert put_item_args["AMICreationDate"] == "2025-01-01T00:00:00.000Z"
     assert put_item_args["LastInstanceType"] == "m5.large"
     assert put_item_args["LastKeyPair"] == "my-key"
+    assert put_item_call_args["ConditionExpression"] == "attribute_not_exists(#project)"
+    assert put_item_call_args["ExpressionAttributeNames"] == {"#project": "project"}
+
+
+def test_create_project_entry_raises_existing_project_error_on_conditional_failure():
+    mock_table = MagicMock()
+    mock_table.put_item.side_effect = _client_error(
+        "ConditionalCheckFailedException",
+        "The conditional request failed",
+        "PutItem",
+    )
+
+    with pytest.raises(ValueError, match="Project 'my-project' already exists"):
+        create_project_entry(mock_table, "my-project", {"ImageId": "ami-12345678"})
 
 
 def test_create_project_entry_client_error():
@@ -174,9 +189,12 @@ def test_create_project_entry_without_launch_defaults():
 
     create_project_entry(mock_table, "my-project", ami_info)
 
-    put_item_args = mock_table.put_item.call_args[1]["Item"]
+    put_item_call_args = mock_table.put_item.call_args[1]
+    put_item_args = put_item_call_args["Item"]
     assert "LastInstanceType" not in put_item_args
     assert "LastKeyPair" not in put_item_args
+    assert put_item_call_args["ConditionExpression"] == "attribute_not_exists(#project)"
+    assert put_item_call_args["ExpressionAttributeNames"] == {"#project": "project"}
 
 
 @patch("devbox.new.create_project_entry")
@@ -350,6 +368,35 @@ def test_new_project_programmatic_existing_project(
         new_project_programmatic(project="my-project", base_ami="ami-12345678")
 
     mock_create_entry.assert_not_called()
+
+
+@patch("devbox.new.create_project_entry")
+@patch("devbox.new.check_project_exists")
+@patch("devbox.new.validate_ami_exists")
+@patch("devbox.new.initialize_aws_clients")
+@patch("devbox.new.utils.get_dynamodb_table")
+@patch("devbox.new.utils.get_ssm_parameter")
+def test_new_project_programmatic_surfaces_conditional_write_race_as_existing_project(
+    mock_get_ssm_parameter,
+    mock_get_dynamodb_table,
+    mock_init_aws,
+    mock_validate_ami,
+    mock_check_exists,
+    mock_create_entry,
+):
+    mock_init_aws.return_value = {
+        "ec2": MagicMock(),
+        "ssm": MagicMock(),
+        "ddb": MagicMock(),
+    }
+    mock_get_ssm_parameter.return_value = "snapshot-table"
+    mock_validate_ami.return_value = {"ImageId": "ami-12345678"}
+    mock_get_dynamodb_table.return_value = MagicMock()
+    mock_check_exists.return_value = None
+    mock_create_entry.side_effect = ValueError("Project 'my-project' already exists")
+
+    with pytest.raises(ValueError, match="Project 'my-project' already exists"):
+        new_project_programmatic(project="my-project", base_ami="ami-12345678")
 
 
 @patch("argparse.ArgumentParser.parse_args")
