@@ -36,25 +36,33 @@ def get_dynamodb_resource() -> ServiceResource:
     return boto3.resource('dynamodb')
 
 
-def get_dynamodb_table(table_name: str) -> Any:
+def get_dynamodb_table(
+    table_name: str, dynamodb_resource: Optional[ServiceResource] = None
+) -> Any:
     """Get a DynamoDB table resource.
 
     Args:
         table_name: Name of the DynamoDB table
+        dynamodb_resource: Optional pre-configured DynamoDB resource
 
     Returns:
         A DynamoDB Table resource
     """
-    dynamodb = get_dynamodb_resource()
+    dynamodb = dynamodb_resource or get_dynamodb_resource()
     return dynamodb.Table(table_name)
 
 
-def get_ssm_parameter(parameter_name: str, required: bool = True) -> str:
+def get_ssm_parameter(
+    parameter_name: str,
+    required: bool = True,
+    ssm_client: Optional[BaseClient] = None,
+) -> str:
     """Get a parameter from SSM Parameter Store.
 
     Args:
         parameter_name: Name of the parameter to fetch
         required: If True, raises an exception if parameter is not found
+        ssm_client: Optional pre-configured SSM client
 
     Returns:
         The parameter value as a string
@@ -63,13 +71,45 @@ def get_ssm_parameter(parameter_name: str, required: bool = True) -> str:
         ValueError: If parameter is not found and required is True
     """
     try:
-        ssm = get_ssm_client()
+        ssm = ssm_client or get_ssm_client()
         response = ssm.get_parameter(Name=parameter_name, WithDecryption=True)
         return response['Parameter']['Value']
     except (ClientError, KeyError) as e:
         if required:
             raise ValueError(f"Failed to get parameter '{parameter_name}': {str(e)}")
         return ""
+
+
+def get_image(
+    image_id: str, ec2_client: Optional[BaseClient] = None
+) -> Optional[Dict[str, Any]]:
+    """Look up a single EC2 image and normalize missing-image cases.
+
+    Args:
+        image_id: AMI ID to fetch
+        ec2_client: Optional pre-configured EC2 client
+
+    Returns:
+        The first matching image dictionary, or None if the image does not exist
+
+    Raises:
+        ClientError: If AWS returns an error other than an invalid or missing AMI
+    """
+    ec2 = ec2_client or get_ec2_client()
+
+    try:
+        response = ec2.describe_images(ImageIds=[image_id])
+    except ClientError as e:
+        error_code = e.response.get("Error", {}).get("Code", "")
+        if error_code.startswith("InvalidAMIID"):
+            return None
+        raise
+
+    images = response.get("Images", [])
+    if not images:
+        return None
+
+    return images[0]
 
 
 def get_project_tag(tags: List[Dict[str, str]]) -> str:

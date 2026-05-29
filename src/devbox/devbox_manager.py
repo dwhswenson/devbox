@@ -296,12 +296,9 @@ class DevBoxManager:
             raise ValueError("No AMI ID provided.")
 
         try:
-            response = self.ec2.describe_images(ImageIds=[ami_id])
-            images = response.get("Images", [])
-            if not images:
+            image = utils.get_image(ami_id, ec2_client=self.ec2)
+            if image is None:
                 raise utils.ResourceNotFoundError(f"AMI {ami_id} not found.")
-
-            image = images[0]
             snapshot_ids = []
             for mapping in image.get("BlockDeviceMappings", []):
                 ebs = mapping.get("Ebs", {})

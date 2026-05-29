@@ -1155,8 +1155,112 @@ def test_display_instance_info_uses_existing_username():
     mock_table.update_item.assert_not_called()
 
 
-def test_launch_programmatic_determines_username():
+@patch("devbox.launch.utils.get_image", return_value=None)
+def test_display_instance_info_uses_placeholder_when_ami_metadata_missing(
+    mock_get_image, capsys
+):
+    """Test that display_instance_info falls back to a placeholder username."""
+    mock_ec2_client = MagicMock()
+    mock_table = MagicMock()
+
+    mock_ec2_client.describe_instances.return_value = {
+        "Reservations": [
+            {
+                "Instances": [
+                    {
+                        "InstanceId": "i-12345",
+                        "State": {"Name": "running"},
+                        "PublicIpAddress": "1.2.3.4",
+                        "InstanceType": "t3.medium",
+                    }
+                ]
+            }
+        ]
+    }
+    mock_table.get_item.return_value = {"Item": {"Username": "", "AMI": "ami-missing"}}
+
+    display_instance_info(mock_ec2_client, "i-12345", "test-project", mock_table)
+
+    output = capsys.readouterr().out
+    assert "<username>@1.2.3.4" in output
+    mock_table.update_item.assert_not_called()
+    mock_get_image.assert_called_once_with("ami-missing", ec2_client=mock_ec2_client)
+
+
+@patch("devbox.launch.initialize_aws_clients")
+@patch("devbox.launch.get_launch_config")
+@patch("devbox.launch.validate_project_status")
+@patch("devbox.launch.determine_ami")
+@patch("devbox.launch.get_volume_info")
+@patch("devbox.launch.get_launch_template_info")
+@patch("devbox.launch.launch_instance_in_azs")
+@patch("devbox.launch.update_instance_status")
+@patch("devbox.launch.display_instance_info")
+def test_launch_programmatic_determines_username(
+    mock_display,
+    mock_update,
+    mock_launch_azs,
+    mock_get_lt_info,
+    mock_get_vol_info,
+    mock_determine_ami,
+    mock_validate,
+    mock_get_config,
+    mock_init_aws,
+):
     """Test that launch_programmatic determines and stores SSH username when not set."""
+    mock_aws = {"ec2": MagicMock(), "ec2_resource": MagicMock()}
+    mock_init_aws.return_value = mock_aws
+
+    mock_table = MagicMock()
+    mock_config = {
+        "lt_ids": ["lt-12345"],
+        "table": mock_table,
+        "item": {
+            "Status": "READY",
+            "LastInstanceType": "t3.medium",
+            "LastKeyPair": "test-key",
+        },
+    }
+    mock_get_config.return_value = mock_config
+    mock_validate.return_value = "READY"
+    mock_determine_ami.return_value = "ami-12345"
+    mock_get_vol_info.return_value = ([], 0)
+    mock_get_lt_info.return_value = {"lt-12345": {"name": "us-east-1a"}}
+
+    mock_instance = MagicMock()
+    mock_instance.meta.data = {"State": {"Name": "running"}}
+    mock_launch_azs.return_value = (
+        mock_instance,
+        "i-12345",
+        {"State": {"Name": "running"}},
+    )
+
+    # Mock DynamoDB response with no username
+    mock_table.get_item.return_value = {"Item": {"Username": ""}}
+
+    # Mock AMI response for username determination
+    mock_aws["ec2"].describe_images.return_value = {
+        "Images": [{"Name": "amzn2-ami-hvm", "Description": "Amazon Linux 2"}]
+    }
+
+    launch_programmatic("test-project", assign_dns=False)
+
+    # Verify that username was determined and stored
+    mock_table.update_item.assert_called()
+    update_calls = mock_table.update_item.call_args_list
+    username_update = None
+    for call in update_calls:
+        if "Username" in call[1].get("UpdateExpression", ""):
+            username_update = call
+            break
+
+    assert username_update is not None
+    assert "ec2-user" in str(username_update[1]["ExpressionAttributeValues"])
+
+
+@patch("devbox.launch.utils.get_image", return_value=None)
+def test_launch_programmatic_warns_when_ami_metadata_missing(mock_get_image, capsys):
+    """Test that launch_programmatic warns when username metadata is unavailable."""
     with patch("devbox.launch.initialize_aws_clients") as mock_init_aws, patch(
         "devbox.launch.get_launch_config"
     ) as mock_get_config, patch(
@@ -1187,7 +1291,7 @@ def test_launch_programmatic_determines_username():
         }
         mock_get_config.return_value = mock_config
         mock_validate.return_value = "READY"
-        mock_determine_ami.return_value = "ami-12345"
+        mock_determine_ami.return_value = "ami-missing"
         mock_get_vol_info.return_value = ([], 0)
         mock_get_lt_info.return_value = {"lt-12345": {"name": "us-east-1a"}}
 
@@ -1199,27 +1303,14 @@ def test_launch_programmatic_determines_username():
             {"State": {"Name": "running"}},
         )
 
-        # Mock DynamoDB response with no username
         mock_table.get_item.return_value = {"Item": {"Username": ""}}
-
-        # Mock AMI response for username determination
-        mock_aws["ec2"].describe_images.return_value = {
-            "Images": [{"Name": "amzn2-ami-hvm", "Description": "Amazon Linux 2"}]
-        }
 
         launch_programmatic("test-project", assign_dns=False)
 
-        # Verify that username was determined and stored
-        mock_table.update_item.assert_called()
-        update_calls = mock_table.update_item.call_args_list
-        username_update = None
-        for call in update_calls:
-            if "Username" in call[1].get("UpdateExpression", ""):
-                username_update = call
-                break
-
-        assert username_update is not None
-        assert "ec2-user" in str(username_update[1]["ExpressionAttributeValues"])
+        output = capsys.readouterr().out
+        assert "Warning: Could not determine SSH username: AMI ami-missing not found" in output
+        mock_table.update_item.assert_not_called()
+        mock_get_image.assert_called_once_with("ami-missing", ec2_client=mock_aws["ec2"])
 
 
 # Test functions for main

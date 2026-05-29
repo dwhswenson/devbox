@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional, TYPE_CHECKING
 from boto3.dynamodb.conditions import Attr, Key
 from botocore.exceptions import ClientError
 
-from devbox.utils import get_project_tag
+from devbox.utils import get_image, get_project_tag
 
 
 logger = logging.getLogger(__name__)
@@ -177,23 +177,12 @@ def cleanup_ami_and_snapshots(
     logger.info("waiting for ami to vanish ami_id=%s", ami_id)
     for _ in range(config.cleanup_max_attempts):
         time.sleep(config.cleanup_wait_seconds)
-        try:
-            resp = ec2_client.describe_images(ImageIds=[ami_id])
-        except ClientError as exc:
-            code = exc.response.get("Error", {}).get("Code", "")
-            if code.startswith("InvalidAMIID"):
-                logger.info(
-                    "ami no longer exists ami_id=%s error_code=%s", ami_id, code
-                )
-                break
-            raise
-        images = resp.get("Images", [])
-
-        if not images:
+        image = get_image(ami_id, ec2_client=ec2_client)
+        if image is None:
             logger.info("ami no longer exists ami_id=%s", ami_id)
             break
         logger.info(
-            "ami still present ami_id=%s image_count=%s", ami_id, len(images)
+            "ami still present ami_id=%s image_count=%s", ami_id, 1
         )
     else:
         raise RuntimeError(f"Timed out waiting for AMI '{ami_id}' to deregister")
@@ -306,19 +295,12 @@ def create_image(
 
     old_ami = main_item.get("AMI")
     if old_ami:
-        desc = []
-        old_ami_missing = False
-        try:
-            desc = ec2_client.describe_images(ImageIds=[old_ami])["Images"]
-        except ClientError as exc:
-            code = exc.response.get("Error", {}).get("Code", "")
-            if code.startswith("InvalidAMIID"):
-                logger.warning("old ami not found ami_id=%s", old_ami)
-                old_ami_missing = True
-            else:
-                raise
-        if desc:
-            image = desc[0]
+        image = get_image(old_ami, ec2_client=ec2_client)
+        old_ami_missing = image is None
+        if old_ami_missing:
+            logger.warning("old ami not found ami_id=%s", old_ami)
+
+        if image is not None:
             if not virtualization_type:
                 virtualization_type = image.get("VirtualizationType")
             if not architecture:
@@ -338,8 +320,6 @@ def create_image(
                     old_ami,
                     project,
                 )
-        elif not old_ami_missing:
-            logger.warning("old ami not found ami_id=%s", old_ami)
 
     register_image_args: Dict[str, Any] = {
         "Name": f"{project}-ami",

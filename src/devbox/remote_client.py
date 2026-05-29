@@ -42,10 +42,18 @@ def normalize_param_prefix(param_prefix: str) -> str:
     str
         Normalized prefix in ``/name`` form. Empty input falls back to
         ``/devbox``.
+
+    Raises
+    ------
+    ValueError
+        Raised when the normalized prefix would contain empty path
+        segments, such as consecutive slashes.
     """
     stripped = param_prefix.strip("/")
     if not stripped:
         return "/devbox"
+    if "//" in stripped:
+        raise ValueError("Parameter prefix cannot contain consecutive slashes")
     return f"/{stripped}"
 
 

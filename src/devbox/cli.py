@@ -7,12 +7,23 @@ import sys
 import click
 from typing import Optional
 
+from .remote_client import normalize_param_prefix
 from .commands.status import run_status_command
 from .devbox_manager import DevBoxManager
 from .console_output import ConsoleOutput
 
 DEFAULT_PARAM_PREFIX = "/devbox"
 PARAM_PREFIX_ENV_VAR = "DEVBOX_PARAM_PREFIX"
+
+
+def _validate_param_prefix(
+    _ctx: click.Context, _param: click.Parameter, value: str
+) -> str:
+    """Normalize and validate shared ``--param-prefix`` values."""
+    try:
+        return normalize_param_prefix(value)
+    except ValueError as exc:
+        raise click.BadParameter(str(exc)) from exc
 
 
 def param_prefix_option(func):
@@ -32,6 +43,7 @@ def param_prefix_option(func):
         "--param-prefix",
         default=DEFAULT_PARAM_PREFIX,
         envvar=PARAM_PREFIX_ENV_VAR,
+        callback=_validate_param_prefix,
         show_default=True,
         show_envvar=True,
         help="SSM parameter prefix",
@@ -188,11 +200,20 @@ def launch(
 
 
 @cli.command()
-@click.argument("project")
-@click.option("--base-ami", required=True, help="Base AMI ID for the project")
+@click.argument('project')
+@click.option('--base-ami', required=True, help='Base AMI ID for the project')
+@click.option('--instance-type', help='Default EC2 instance type for future launches')
+@click.option('--key-pair', help='Default SSH key pair name for future launches')
 @param_prefix_option
 @click.pass_context
-def new(ctx, project: str, base_ami: str, param_prefix: str):
+def new(
+    ctx,
+    project: str,
+    base_ami: str,
+    instance_type: Optional[str],
+    key_pair: Optional[str],
+    param_prefix: str,
+):
     """Create a new DevBox project without launching an instance.
 
     PROJECT is the name of the project to create.
@@ -203,7 +224,11 @@ def new(ctx, project: str, base_ami: str, param_prefix: str):
 
     try:
         new_project_programmatic(
-            project=project, base_ami=base_ami, param_prefix=param_prefix
+            project=project,
+            base_ami=base_ami,
+            instance_type=instance_type,
+            key_pair=key_pair,
+            param_prefix=param_prefix
         )
     except Exception as e:
         console.print_error(f"Failed to create project: {str(e)}")
