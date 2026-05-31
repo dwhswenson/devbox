@@ -160,83 +160,70 @@ class TestTerminateCommand:
         result = self.runner.invoke(terminate, ["--help"])
 
         assert result.exit_code == 0
-        assert "Terminate a DevBox instance by its ID" in result.output
-        assert "INSTANCE_ID" in result.output
+        assert "Terminate a DevBox instance by instance ID or project name" in result.output
+        assert "IDENTIFIER" in result.output
 
-    @patch("devbox.cli.DevBoxManager")
+    @patch("devbox.cli.run_terminate_command")
     @patch("devbox.cli.ConsoleOutput")
-    def test_terminate_success(self, mock_console_class, mock_manager_class):
-        # TODO: redo this test so that it is meaningful? too much mock here
+    def test_terminate_success(self, mock_console_class, mock_run_terminate_command):
         mock_console = MagicMock()
-        mock_manager = MagicMock()
         mock_console_class.return_value = mock_console
-        mock_manager_class.return_value = mock_manager
-
-        mock_manager.terminate_instance.return_value = {
-            "instance_id": "i-1234567890abcdef0",
-            "project": "test-project",
-        }
 
         self.runner = CliRunner()
         result = self.runner.invoke(cli, ["terminate", "i-1234567890abcdef0"])
 
         assert result.exit_code == 0
-        mock_manager.terminate_instance.assert_called_once_with(
-            "i-1234567890abcdef0", mock_console
-        )
-        mock_console.print_success.assert_called_once_with(
-            "Terminating instance i-1234567890abcdef0 (project: test-project)."
+        mock_run_terminate_command.assert_called_once_with(
+            identifier="i-1234567890abcdef0",
+            param_prefix="/devbox",
+            console=mock_console,
         )
 
-    @patch("devbox.cli.DevBoxManager")
+    @patch("devbox.cli.run_terminate_command")
     @patch("devbox.cli.ConsoleOutput")
-    def test_terminate_failure(self, mock_console_class, mock_manager_class):
+    def test_terminate_failure(self, mock_console_class, mock_run_terminate_command):
         mock_console = MagicMock()
-        mock_manager = MagicMock()
         mock_console_class.return_value = mock_console
-        mock_manager_class.return_value = mock_manager
-
-        # TODO: maybe don't mock this?
-        mock_manager.terminate_instance.side_effect = Exception("Instance not found")
+        mock_run_terminate_command.side_effect = Exception("Instance not found")
 
         result = self.runner.invoke(cli, ["terminate", "i-nonexistent"])
 
         assert result.exit_code == 1
-        mock_manager.terminate_instance.assert_called_once_with("i-nonexistent", mock_console)
+        mock_run_terminate_command.assert_called_once_with(
+            identifier="i-nonexistent",
+            param_prefix="/devbox",
+            console=mock_console,
+        )
         mock_console.print_error.assert_called_once_with(
             "Failed to terminate instance: Instance not found"
         )
 
-    @patch("devbox.cli.DevBoxManager")
+    @patch("devbox.cli.run_terminate_command")
     @patch("devbox.cli.ConsoleOutput")
     def test_terminate_with_param_prefix_option(
-        self, mock_console_class, mock_manager_class
+        self, mock_console_class, mock_run_terminate_command
     ):
         mock_console = MagicMock()
-        mock_manager = MagicMock()
         mock_console_class.return_value = mock_console
-        mock_manager_class.return_value = mock_manager
-        mock_manager.terminate_instance.return_value = {
-            "instance_id": "i-1234567890abcdef0",
-            "project": "test-project",
-        }
 
         result = self.runner.invoke(
             cli, ["terminate", "i-1234567890abcdef0", "--param-prefix", "/custom"]
         )
 
         assert result.exit_code == 0
-        mock_manager_class.assert_called_once_with(prefix="custom")
+        mock_run_terminate_command.assert_called_once_with(
+            identifier="i-1234567890abcdef0",
+            param_prefix="/custom",
+            console=mock_console,
+        )
 
-    @patch("devbox.cli.DevBoxManager")
+    @patch("devbox.cli.run_terminate_command")
     @patch("devbox.cli.ConsoleOutput")
-    def test_terminate_exception(self, mock_console_class, mock_manager_class):
+    def test_terminate_exception(self, mock_console_class, mock_run_terminate_command):
         mock_console = MagicMock()
-        mock_manager = MagicMock()
         mock_console_class.return_value = mock_console
-        mock_manager_class.return_value = mock_manager
 
-        mock_manager.terminate_instance.side_effect = Exception("Unexpected error")
+        mock_run_terminate_command.side_effect = Exception("Unexpected error")
 
         result = self.runner.invoke(cli, ["terminate", "i-error"])
 
@@ -1059,21 +1046,19 @@ class TestErrorHandlingPatterns:
         ],
     )
     @patch("devbox.cli.run_status_command")
-    @patch("devbox.cli.DevBoxManager")
+    @patch("devbox.cli.run_terminate_command")
     @patch("devbox.cli.ConsoleOutput")
     def test_consistent_error_exit_codes(
-        self, mock_console_class, mock_manager_class, mock_run_status_command, command, args
+        self, mock_console_class, mock_run_terminate_command, mock_run_status_command, command, args
     ):
         """Test consistent error exit codes across commands."""
         mock_console = MagicMock()
-        mock_manager = MagicMock()
         mock_console_class.return_value = mock_console
-        mock_manager_class.return_value = mock_manager
 
         if "status" in command:
             mock_run_status_command.side_effect = Exception("Test error")
         elif "terminate" in command:
-            mock_manager.terminate_instance.side_effect = Exception("Test error")
+            mock_run_terminate_command.side_effect = Exception("Test error")
 
         result = self.runner.invoke(cli, command)
 
@@ -1134,24 +1119,17 @@ class TestCommandChaining:
         mock_run_status_command.assert_has_calls(expected_calls)
 
     @patch("devbox.cli.run_status_command")
-    @patch("devbox.cli.DevBoxManager")
+    @patch("devbox.cli.run_terminate_command")
     @patch("devbox.cli.ConsoleOutput")
     def test_command_state_isolation(
         self,
         mock_console_class,
-        mock_manager_class,
+        mock_run_terminate_command,
         mock_run_status_command,
     ):
         """Test commands don't affect each other's state."""
         mock_console = MagicMock()
-        mock_manager = MagicMock()
         mock_console_class.return_value = mock_console
-        mock_manager_class.return_value = mock_manager
-
-        mock_manager.terminate_instance.return_value = {
-            "instance_id": "i-test",
-            "project": "test-project",
-        }
 
         # Run status then terminate
         result1 = self.runner.invoke(cli, ["status"])
@@ -1166,7 +1144,11 @@ class TestCommandChaining:
             param_prefix="/devbox",
             console=mock_console,
         )
-        mock_manager.terminate_instance.assert_called_once_with("i-test", mock_console)
+        mock_run_terminate_command.assert_called_once_with(
+            identifier="i-test",
+            param_prefix="/devbox",
+            console=mock_console,
+        )
 
 
 class TestParamPrefixEnvironmentOverrides:
@@ -1192,19 +1174,13 @@ class TestParamPrefixEnvironmentOverrides:
             console=mock_console,
         )
 
-    @patch("devbox.cli.DevBoxManager")
+    @patch("devbox.cli.run_terminate_command")
     @patch("devbox.cli.ConsoleOutput")
     def test_terminate_uses_param_prefix_from_env(
-        self, mock_console_class, mock_manager_class
+        self, mock_console_class, mock_run_terminate_command
     ):
         mock_console = MagicMock()
-        mock_manager = MagicMock()
         mock_console_class.return_value = mock_console
-        mock_manager_class.return_value = mock_manager
-        mock_manager.terminate_instance.return_value = {
-            "instance_id": "i-1234567890abcdef0",
-            "project": "test-project",
-        }
 
         result = self.runner.invoke(
             cli,
@@ -1213,7 +1189,11 @@ class TestParamPrefixEnvironmentOverrides:
         )
 
         assert result.exit_code == 0
-        mock_manager_class.assert_called_once_with(prefix="env/devbox")
+        mock_run_terminate_command.assert_called_once_with(
+            identifier="i-1234567890abcdef0",
+            param_prefix="/env/devbox",
+            console=mock_console,
+        )
 
     @patch("devbox.cli.DevBoxManager")
     @patch("devbox.cli.ConsoleOutput")
