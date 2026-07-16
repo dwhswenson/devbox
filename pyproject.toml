@@ -18,7 +18,7 @@ classifiers = [
 ]
 dependencies = [
     "boto3>=1.26.0",
-    "charset-normalizer==3.4.0",  # pin needed to fix issue with request
+    "charset-normalizer==3.4.0",  # pin needed to fix issue with requests
     "click>=8.0.0",
     "cloudflare>=4.3.1",
     "requests>=2.31.0",
