@@ -10,6 +10,7 @@ from starlette.responses import PlainTextResponse, StreamingResponse
 from starlette.routing import Route
 
 from ..commands.status import handle_status_action
+from ..commands.terminate import handle_terminate_action
 from ..cli_protocol import NDJSON_MIME_TYPE, CliAction, CliEventType
 from .contracts import (
     CliRequestEnvelope,
@@ -23,6 +24,7 @@ ActionHandler = Callable[[CliRequestEnvelope], list[dict[str, Any]]]
 
 ACTION_HANDLERS: dict[CliAction, ActionHandler] = {
     CliAction.STATUS: handle_status_action,
+    CliAction.TERMINATE: handle_terminate_action,
 }
 
 

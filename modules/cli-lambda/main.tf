@@ -12,7 +12,7 @@ locals {
   lambda_source_hash = sha256(join("", [
     for relpath in sort(local.lambda_source_files) : filesha256("${local.repo_root}/${relpath}")
   ]))
-  # Keep one statement per CLI action so later phases can add permissions incrementally.
+  # Keep one statement per CLI action with the full permission set that action needs.
   command_policy_statements = [
     {
       sid = "StatusCmdPermissions"
@@ -21,6 +21,14 @@ locals {
         "ec2:DescribeInstances",
         "ec2:DescribeSnapshots",
         "ec2:DescribeVolumes"
+      ]
+      resources = ["*"]
+    },
+    {
+      sid = "TerminateCmdPermissions"
+      actions = [
+        "ec2:DescribeInstances",
+        "ec2:TerminateInstances"
       ]
       resources = ["*"]
     }

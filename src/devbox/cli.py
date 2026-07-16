@@ -9,6 +9,7 @@ from typing import Optional
 
 from .remote_client import normalize_param_prefix
 from .commands.status import run_status_command
+from .commands.terminate import run_terminate_command
 from .devbox_manager import DevBoxManager
 from .console_output import ConsoleOutput
 
@@ -115,18 +116,18 @@ def status(
 
 
 @cli.command()
-@click.argument("instance_id")
+@click.argument("identifier")
 @param_prefix_option
 @click.pass_context
-def terminate(ctx, instance_id: str, param_prefix: str):
-    """Terminate a DevBox instance by its ID."""
+def terminate(ctx, identifier: str, param_prefix: str):
+    """Terminate a DevBox instance by instance ID or project name."""
     console = ctx.obj["console"]
-    manager = get_manager(console, param_prefix)
 
     try:
-        result = manager.terminate_instance(instance_id, console)
-        console.print_success(
-            f"Terminating instance {result['instance_id']} (project: {result['project']})."
+        run_terminate_command(
+            identifier=identifier,
+            param_prefix=param_prefix,
+            console=console,
         )
     except Exception as e:
         console.print_error(f"Failed to terminate instance: {str(e)}")

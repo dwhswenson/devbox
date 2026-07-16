@@ -13,6 +13,7 @@ class CliAction(StrEnum):
     """Enumeration of supported Lambda-backed CLI actions."""
 
     STATUS = "status"
+    TERMINATE = "terminate"
 
 
 class CliEventType(StrEnum):

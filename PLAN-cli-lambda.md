@@ -19,7 +19,7 @@
 - Lambda routing: the CLI Lambda router uses an explicit dispatch table keyed by the shared action enum. Future actions should add themselves to that dispatch table rather than branching on ad hoc string comparisons.
 - Command-module layout: command-specific client-side and Lambda-side behavior now lives under `src/devbox/commands/<action>.py`. `cli.py` remains the Click entry point, `remote_client.py` remains generic transport, and `cli_lambda/app.py` remains the generic dispatch layer.
 - Python documentation style: new Python code for this migration should use numpydoc-style docstrings for modules, public functions, and non-trivial helpers. Exception: Click entrypoints should keep user-facing docstrings, because Click surfaces those docstrings in `--help` output and they are part of the CLI UX rather than internal developer documentation.
-- IAM layout: keep one CLI Lambda IAM statement per action wherever practical so permissions can be reviewed incrementally as commands migrate.
+- IAM layout: keep one CLI Lambda IAM statement per action wherever practical, and make each action block self-contained so its required permissions can be reviewed in isolation even when that duplicates shared read permissions.
 - Phase 1 `status` Lambda permissions are intentionally EC2-only. The local CLI resolves the Function URL from SSM, and the Lambda-side `status` handler currently reuses `DevBoxManager.list_*` inventory helpers that call EC2 `Describe*` APIs only.
 - Documentation authority: this file is authoritative for phase 1. Any older standalone CLI migration spec is advisory only until it is reconciled back into this document.
 - Dependencies: `requests` may be added to runtime dependencies; `responses` may be added to test dependencies.
@@ -187,7 +187,7 @@ Milestone: `devbox status [project]` runs from the local CLI through the deploye
 - The CLI Lambda image now uses Lambda Web Adapter `1.0.0`, matching the current official README example for container images.
 - The CLI Lambda `local-exec` build step now logs into Public ECR explicitly with `aws ecr-public get-login-password` before `docker build`, because the adapter image pull failed with expired or missing Public ECR auth in a fresh-account deployment.
 - The CLI Lambda `local-exec` build step now uses a temporary `DOCKER_CONFIG` so Terraform does not depend on or mutate the operator's persistent Docker Desktop keychain state on macOS.
-- The phase 1 IAM policy in `modules/cli-lambda/main.tf` is intentionally grouped per action. Keep that structure so later PRs can show exactly which permissions each migrated command added.
+- The phase 1 IAM policy in `modules/cli-lambda/main.tf` is intentionally grouped per action. Keep that structure, and prefer each action block to list the full permission set that command needs in isolation even when that duplicates shared EC2 read permissions.
 - Do not add SSM or DynamoDB permissions to the CLI Lambda just because `DevBoxManager` can use them elsewhere. Add them only when a migrated Lambda action actually reads those services.
 - The request envelope still carries `param_prefix` from the client. That is acceptable in phase 1 because `status` only reuses EC2 `Describe*` inventory helpers and the CLI Lambda IAM is EC2-only, so the prefix does not currently select SSM or DynamoDB resources. Before any later action uses prefix-derived SSM parameter names, DynamoDB table names, or other non-EC2 resources, add server-side validation/normalization for the prefix or replace the client-provided value with Lambda-side configuration.
 - `src/devbox/remote_client.py` now wraps `requests` transport failures as `RemoteInvocationError`, but it still uses a single `timeout=30` value. Revisit timeout policy in phase 3 before migrating `launch`, because long-lived streaming commands may need separate connect/read timeouts or a longer read timeout to avoid aborting a healthy response stream mid-operation.
@@ -211,22 +211,68 @@ Milestone: `status` command-specific behavior is co-located under `src/devbox/co
 
 Milestone: `devbox terminate <instance-id-or-project>` runs from the local CLI through the deployed CLI Lambda and preserves current success and failure behavior.
 
-- [ ] Extend the wire contract for `terminate`, including request payload and result payload.
-- [ ] Add the remote `terminate` action to the Lambda router.
-- [ ] Reuse the existing termination logic behind a Lambda-safe interface rather than reimplementing termination rules in the HTTP layer.
-- [ ] Expand CLI Lambda IAM only with the permissions required for termination.
-- [ ] Migrate only `terminate` in the CLI to the remote path.
-- [ ] Preserve current CLI syntax and current visible success/error messages as closely as practical.
-- [ ] Add tests for:
-  - [ ] terminate by instance ID
-  - [ ] terminate by project name
-  - [ ] not-found behavior
-  - [ ] multiple-instance ambiguity behavior
-  - [ ] terminal `error` event mapping
-  - [ ] transport failure behavior
-- [ ] Run `pixi run -e dev python -m pytest` for touched tests.
-- [ ] Run `tofu fmt` and `tofu validate`.
+- [x] Extend the wire contract for `terminate`, including request payload and result payload.
+- [x] Add the remote `terminate` action to the Lambda router.
+- [x] Reuse the existing termination logic behind a Lambda-safe interface rather than reimplementing termination rules in the HTTP layer.
+- [x] Expand CLI Lambda IAM only with the permissions required for termination.
+- [x] Migrate only `terminate` in the CLI to the remote path.
+- [x] Preserve current CLI syntax and current visible success/error messages as closely as practical.
+- [x] Add tests for:
+  - [x] terminate by instance ID
+  - [x] terminate by project name
+  - [x] not-found behavior
+  - [x] multiple-instance ambiguity behavior
+  - [x] terminal `error` event mapping
+  - [x] transport failure behavior
+- [x] Run `pixi run -e dev python -m pytest` for touched tests.
+- [x] Run `tofu fmt` and `tofu validate`.
 - [ ] Record the local end-to-end termination validation steps and outcome in this file.
+
+### Phase 2 `terminate` Contract
+
+- Request envelope:
+
+```json
+{
+  "version": "v1",
+  "action": "terminate",
+  "request_id": "uuid",
+  "param_prefix": "/devbox",
+  "payload": {
+    "identifier": "i-0123456789abcdef0"
+  }
+}
+```
+
+- `payload.identifier` must be a non-empty string and may be either an instance ID or a project name.
+- Success path event sequence:
+  - exactly one `result` event with the termination payload
+  - exactly one terminal `success` event
+- `terminate` result payload shape:
+
+```json
+{
+  "instance_id": "i-0123456789abcdef0",
+  "project": "my-project"
+}
+```
+
+### Phase 2 Validation Log
+
+- `2026-05-29`: targeted phase 2 pytest suite passed.
+  - Command: `pixi run -e dev python -m pytest tests/commands/test_terminate.py tests/cli_lambda/test_contracts.py tests/cli_lambda/test_app.py tests/test_cli.py tests/test_devbox_manager.py -q`
+  - Result: `135 passed, 1 warning`
+- `2026-05-29`: Terraform formatting passed.
+  - Command: `tofu fmt`
+  - Result: passed
+- `2026-05-29`: Terraform validation passed.
+  - Command: `tofu validate`
+  - Result: passed
+- End-to-end commands (must be run by DWHS in devbox-deploy/ repo, not for agents)
+  - `tofu plan -out tfplan && tofu apply tfplan` to deploy the updated CLI Lambda and IAM policy
+  - `devbox terminate i-0123456789abcdef0` against the deployed CLI Lambda, expecting the existing success message
+  - `devbox terminate my-project` against the deployed CLI Lambda, expecting project-name resolution to match current behavior
+- Observed outcome: automated validation passed locally; deployed-AWS end-to-end termination validation is still pending operator run.
 
 ## Phase 3: `launch`
 
