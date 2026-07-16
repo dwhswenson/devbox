@@ -126,7 +126,7 @@ between different DevBox projects.
       --region us-east-1 \
       --key-name devbox-key \
       --public-key-material fileb:///path/to/my/key.pub
-    ```
+     ```
 
 If you already have a key pair, but don't know the name you gave it on AWS, you
 can get that from:
