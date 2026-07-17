@@ -226,7 +226,7 @@ Milestone: `devbox terminate <instance-id-or-project>` runs from the local CLI t
   - [x] transport failure behavior
 - [x] Run `pixi run -e dev python -m pytest` for touched tests.
 - [x] Run `tofu fmt` and `tofu validate`.
-- [ ] Record the local end-to-end termination validation steps and outcome in this file.
+- [x] Record the local end-to-end termination validation steps and outcome in this file.
 
 ### Phase 2 `terminate` Contract
 
@@ -268,11 +268,15 @@ Milestone: `devbox terminate <instance-id-or-project>` runs from the local CLI t
 - `2026-05-29`: Terraform validation passed.
   - Command: `tofu validate`
   - Result: passed
-- End-to-end commands (must be run by DWHS in devbox-deploy/ repo, not for agents)
-  - `tofu plan -out tfplan && tofu apply tfplan` to deploy the updated CLI Lambda and IAM policy
-  - `devbox terminate i-0123456789abcdef0` against the deployed CLI Lambda, expecting the existing success message
-  - `devbox terminate my-project` against the deployed CLI Lambda, expecting project-name resolution to match current behavior
-- Observed outcome: automated validation passed locally; deployed-AWS end-to-end termination validation is still pending operator run.
+- `2026-07-16`: deployed-AWS end-to-end validation was completed by DWHS.
+  - Command: `devbox terminate <instance-id-or-project>` against the deployed CLI Lambda.
+  - Result: the termination command successfully ran through the Lambda and terminated the target instance.
+
+### Phase 2 Handoff Notes
+
+- Automated coverage verifies both supported identifier forms (instance ID and project name), along with not-found, ambiguity, terminal-error, and transport-failure behavior. The deployed-AWS run supplies the required real CLI/Lambda-path validation; another live termination is not required to close this phase.
+- Remaining phase 2 blockers: none. Phase 2 is complete.
+- Next session starts here: begin phase 3 `launch`, starting with the wire contract and HTTP timeout-policy decision.
 
 ## Phase 3: `launch`
 
