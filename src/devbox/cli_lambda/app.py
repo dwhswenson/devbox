@@ -11,6 +11,7 @@ from starlette.routing import Route
 
 from ..commands.status import handle_status_action
 from ..commands.terminate import handle_terminate_action
+from ..commands.launch import handle_launch_action
 from ..cli_protocol import NDJSON_MIME_TYPE, CliAction, CliEventType
 from .contracts import (
     CliRequestEnvelope,
@@ -25,6 +26,7 @@ ActionHandler = Callable[[CliRequestEnvelope], Iterable[dict[str, Any]]]
 ACTION_HANDLERS: dict[CliAction, ActionHandler] = {
     CliAction.STATUS: handle_status_action,
     CliAction.TERMINATE: handle_terminate_action,
+    CliAction.LAUNCH: handle_launch_action,
 }
 
 
