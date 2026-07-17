@@ -20,7 +20,7 @@ from .contracts import (
     parse_request_envelope,
 )
 
-ActionHandler = Callable[[CliRequestEnvelope], list[dict[str, Any]]]
+ActionHandler = Callable[[CliRequestEnvelope], Iterable[dict[str, Any]]]
 
 ACTION_HANDLERS: dict[CliAction, ActionHandler] = {
     CliAction.STATUS: handle_status_action,
@@ -28,7 +28,7 @@ ACTION_HANDLERS: dict[CliAction, ActionHandler] = {
 }
 
 
-def dispatch_action(envelope: CliRequestEnvelope) -> list[dict[str, object]]:
+def dispatch_action(envelope: CliRequestEnvelope) -> Iterable[dict[str, Any]]:
     """Dispatch one validated CLI Lambda request.
 
     Parameters
@@ -53,7 +53,7 @@ def dispatch_action(envelope: CliRequestEnvelope) -> list[dict[str, object]]:
     return handler(envelope)
 
 
-def execute_action(envelope: CliRequestEnvelope) -> list[dict[str, object]]:
+def execute_action(envelope: CliRequestEnvelope) -> Iterable[dict[str, Any]]:
     """Execute one CLI Lambda request.
 
     Parameters
@@ -74,11 +74,11 @@ def execute_action(envelope: CliRequestEnvelope) -> list[dict[str, object]]:
         400 instead of an application ``error`` event.
     """
     try:
-        return dispatch_action(envelope)
+        yield from dispatch_action(envelope)
     except InvalidCliRequestError:
         raise
     except Exception as exc:
-        return [build_event(CliEventType.ERROR, envelope.action, str(exc))]
+        yield build_event(CliEventType.ERROR, envelope.action, str(exc))
 
 
 def stream_events(events: Iterable[dict[str, object]]) -> StreamingResponse:

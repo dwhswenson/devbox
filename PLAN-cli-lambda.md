@@ -24,6 +24,8 @@
 - Documentation authority: this file is authoritative for phase 1. Any older standalone CLI migration spec is advisory only until it is reconciled back into this document.
 - Dependencies: `requests` may be added to runtime dependencies; `responses` may be added to test dependencies.
 - End-of-phase validation: real local CLI invocation against deployed AWS, not just local mocks or container smoke tests.
+- Streaming handlers return lazy event iterables so progress is sent while long-running actions execute and iteration failures become terminal `error` events.
+- Remote requests use separate connect and read timeouts. The connect timeout is 10 seconds, existing commands retain a 30-second read timeout, and long-running actions may opt into a longer read timeout.
 - `new` is deferred but remains in scope, even though the current CLI references a missing implementation.
 
 ## Public Contract

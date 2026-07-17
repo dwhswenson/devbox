@@ -166,6 +166,16 @@ class ConsoleOutput:
             message: Warning message to display
         """
         self.console.print(f"[yellow]Warning: {message}[/yellow]")
+
+    def print_progress(self, message: str) -> None:
+        """Print a progress message.
+
+        Parameters
+        ----------
+        message : str
+            Progress message to display.
+        """
+        self.console.print(f"[blue]{message}[/blue]")
     
     @staticmethod
     def _format_timedelta(delta) -> str:
