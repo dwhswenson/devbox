@@ -26,6 +26,9 @@
 - End-of-phase validation: real local CLI invocation against deployed AWS, not just local mocks or container smoke tests.
 - Streaming handlers return lazy event iterables so progress is sent while long-running actions execute and iteration failures become terminal `error` events.
 - Remote requests use separate connect and read timeouts. The connect timeout is 10 seconds, existing commands retain a 30-second read timeout, and long-running actions may opt into a longer read timeout.
+- Phase 3 `launch` uses a 930-second read timeout against a Lambda configured for the 900-second maximum. The workflow polls instance state every 15 seconds for at most 40 attempts and emits progress between polls.
+- The CLI Lambda is pinned to Terraform's `DEVBOX_PARAM_PREFIX`. `launch` rejects a request whose envelope prefix does not match that configured value and never uses a caller-selected prefix for SSM or DynamoDB access.
+- EC2 userdata is read by the local CLI, sent inline, and limited to 16,384 UTF-8 bytes on both sides of the wire.
 - `new` is deferred but remains in scope, even though the current CLI references a missing implementation.
 
 ## Public Contract
@@ -284,27 +287,73 @@ Milestone: `devbox terminate <instance-id-or-project>` runs from the local CLI t
 
 Milestone: `devbox launch ...` runs from the local CLI through the deployed CLI Lambda, including userdata handling and current DNS flags.
 
-- [ ] Extend the wire contract for `launch`, including all current CLI options and the inline userdata payload shape.
-- [ ] Refactor launch logic so Lambda can emit structured progress events instead of relying on raw `print` output.
-- [ ] Revisit the CLI HTTP timeout policy before `launch` goes remote. Phase 1 wraps `requests` transport failures cleanly, but still uses a single `timeout=30`; decide whether streamed commands need separate connect/read timeouts or a longer read timeout.
-- [ ] Preserve shared business logic; do not fork a second launch implementation just for the Lambda path.
-- [ ] Keep local preprocessing in the CLI for:
-  - [ ] reading `--userdata-file`
-  - [ ] embedding file contents into the request payload
-  - [ ] rejecting oversized request bodies before transmission if needed
-- [ ] Add the remote `launch` action to the Lambda router.
-- [ ] Expand CLI Lambda IAM only for launch-related operations.
-- [ ] Migrate only `launch` in the CLI to the remote path.
-- [ ] Preserve current flags for DNS behavior and ensure the request contract carries the same semantics.
-- [ ] Add tests for:
-  - [ ] payload construction for all launch options
-  - [ ] userdata inlining
-  - [ ] progress-event rendering
-  - [ ] launch success and failure mapping
-  - [ ] DNS option propagation
-- [ ] Run `pixi run -e dev python -m pytest` for touched tests.
-- [ ] Run `tofu fmt` and `tofu validate`.
+- [x] Extend the wire contract for `launch`, including all current CLI options and the inline userdata payload shape.
+- [x] Refactor launch logic so Lambda can emit structured progress events instead of relying on raw `print` output.
+- [x] Revisit the CLI HTTP timeout policy before `launch` goes remote. Phase 1 wraps `requests` transport failures cleanly, but still uses a single `timeout=30`; decide whether streamed commands need separate connect/read timeouts or a longer read timeout.
+- [x] Preserve shared business logic; do not fork a second launch implementation just for the Lambda path.
+- [x] Keep local preprocessing in the CLI for:
+  - [x] reading `--userdata-file`
+  - [x] embedding file contents into the request payload
+  - [x] rejecting oversized request bodies before transmission if needed
+- [x] Add the remote `launch` action to the Lambda router.
+- [x] Expand CLI Lambda IAM only for launch-related operations.
+- [x] Migrate only `launch` in the CLI to the remote path.
+- [x] Preserve current flags for DNS behavior and ensure the request contract carries the same semantics.
+- [x] Add tests for:
+  - [x] payload construction for all launch options
+  - [x] userdata inlining
+  - [x] progress-event rendering
+  - [x] launch success and failure mapping
+  - [x] DNS option propagation
+- [x] Run `pixi run -e dev python -m pytest` for touched tests.
+- [x] Run `tofu fmt` and `tofu validate`.
 - [ ] Record the local end-to-end launch validation steps and outcome in this file.
+
+### Phase 3 `launch` Contract
+
+- Request payload:
+
+```json
+{
+  "project": "my-project",
+  "instance_type": "t3.medium",
+  "key_pair": "my-key",
+  "volume_size": 100,
+  "base_ami": "ami-0123456789abcdef0",
+  "userdata": "#!/bin/bash\necho ready",
+  "assign_dns": true,
+  "dns_subdomain": "my-project"
+}
+```
+
+- Optional string fields are `null` when omitted. `volume_size` defaults to `0`, and `assign_dns` defaults to `true`.
+- `userdata` contains file contents, never a local path, and may be `null`; non-null content is limited to 16,384 UTF-8 bytes.
+- Success path event sequence:
+  - zero or more `progress` and `warning` events
+  - exactly one `result` event
+  - exactly one terminal `success` event
+- The result contains `project`, `instance_id`, `state`, `instance_type`, `image_id`, `availability_zone`, `private_ip`, `public_ip`, `ssh_username`, and `dns_name`. Fields unavailable from EC2 or optional configuration are `null`.
+
+### Phase 3 Validation Log
+
+- `2026-07-17`: full Python test suite passed.
+  - Command: `pixi run -e dev python -m pytest -q`
+  - Result: `471 passed, 1 warning`
+- `2026-07-17`: Ruff passed for all touched Python files.
+- `2026-07-17`: Terraform formatting check passed.
+  - Command: `tofu fmt -check -recursive`
+- `2026-07-17`: Terraform validation passed.
+  - Command: `tofu validate`
+- Deployed-AWS validation to be run by DWHS from the deployment environment:
+  - Deploy the reviewed Terraform plan containing the CLI Lambda image, timeout, environment, and IAM changes.
+  - Run `devbox launch <project> --instance-type <type> --key-pair <key> --userdata-file <file>` and include `--dns-subdomain <label>` when DNS is configured.
+  - Confirm progress events arrive before completion, `devbox status <project>` shows the instance, userdata ran, and the optional DNS name resolves.
+  - Clean up with `devbox terminate <project>`.
+
+### Phase 3 Handoff Notes
+
+- Automated implementation and validation are complete. The only remaining phase 3 item is the operator-run deployed-AWS acceptance flow above.
+- Do not mark phase 3 complete or begin phase 4 until that outcome is recorded here.
 
 ## Phase 4: `new`
 
