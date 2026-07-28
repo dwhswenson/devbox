@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 import time
 from dataclasses import asdict, dataclass
@@ -35,6 +36,8 @@ SSMClient = Any
 DynamoDBTable = Any
 EC2Client = Any
 EC2ServiceResource = Any
+
+LOGGER = logging.getLogger(__name__)
 
 
 def read_userdata_file(filepath: Optional[str]) -> Optional[str]:
@@ -150,7 +153,11 @@ def get_project_snapshot(
 
 
 def get_volume_info(
-    ec2: Any, image_id: str, min_volume_size: int = 0
+    ec2: Any,
+    image_id: str,
+    min_volume_size: int = 0,
+    *,
+    on_progress: Optional[Callable[[str], None]] = None,
 ) -> Tuple[List[Dict[str, Any]], int]:
     """Get and validate volume information for an AMI.
 
@@ -158,6 +165,7 @@ def get_volume_info(
         ec2: EC2 client
         image_id: ID of the AMI to get volume info for
         min_volume_size: Minimum size (GiB) for the largest volume
+        on_progress: Optional callback for volume-adjustment progress
 
     Returns:
         Tuple of (volumes, largest_volume_size) where:
@@ -195,6 +203,11 @@ def get_volume_info(
     # Update volumes if needed
     if min_volume_size > 0 and largest_volume_size < min_volume_size:
         if largest_volume:
+            if on_progress is not None:
+                on_progress(
+                    f"Increasing volume size from {largest_volume_size} GiB "
+                    f"to {min_volume_size} GiB"
+                )
             largest_volume["Ebs"]["VolumeSize"] = min_volume_size
             largest_volume_size = min_volume_size
             # Ensure volume type is set to a modern type
@@ -212,17 +225,43 @@ def get_volume_info(
                     },
                 }
             )
+            if on_progress is not None:
+                on_progress(f"Creating new volume of size {min_volume_size} GiB")
             largest_volume_size = min_volume_size
 
-    return volumes, largest_volume_size if largest_volume else 0
+    return volumes, largest_volume_size
 
 
-def get_launch_template_info(ec2: Any, lt_ids: List[str]) -> Dict[str, Dict[str, str]]:
+def _report_launch_template_warning(
+    message: str, on_warning: Optional[Callable[[str], None]]
+) -> None:
+    """Send a best-effort metadata warning to the workflow or application log."""
+    if on_warning is not None:
+        on_warning(message)
+    else:
+        LOGGER.warning(message)
+
+
+def _client_error_summary(error: ClientError) -> str:
+    """Return the AWS error code and message from a client error."""
+    details = error.response.get("Error", {})
+    code = details.get("Code", "Unknown")
+    message = details.get("Message", str(error))
+    return f"{code}: {message}"
+
+
+def get_launch_template_info(
+    ec2: Any,
+    lt_ids: List[str],
+    *,
+    on_warning: Optional[Callable[[str], None]] = None,
+) -> Dict[str, Dict[str, str]]:
     """Get availability zone information for launch templates.
 
     Args:
         ec2: EC2 client
         lt_ids: List of launch template IDs
+        on_warning: Optional callback for non-fatal metadata lookup failures
 
     Returns:
         Dictionary mapping launch template IDs to AZ info with keys:
@@ -284,11 +323,21 @@ def get_launch_template_info(ec2: Any, lt_ids: List[str]) -> Dict[str, Dict[str,
                             az_name = subnet_desc["Subnets"][0].get(
                                 "AvailabilityZone", az_name
                             )
-                    except ClientError:
-                        pass
+                    except ClientError as error:
+                        _report_launch_template_warning(
+                            f"Unable to inspect subnet {subnet_id} for launch "
+                            f"template {lt_id}: {_client_error_summary(error)}; "
+                            f"using availability-zone label {az_name}",
+                            on_warning,
+                        )
 
-        except ClientError:
-            pass
+        except ClientError as error:
+            _report_launch_template_warning(
+                f"Unable to inspect launch template {lt_id}: "
+                f"{_client_error_summary(error)}; using fallback "
+                f"availability-zone label {az_name}",
+                on_warning,
+            )
 
         az_info[lt_id] = {"name": az_name, "index": az_index}
 
@@ -1007,8 +1056,24 @@ def iter_launch_workflow(
         )
     yield LaunchUpdate("progress", f"Using AMI: {image_id}")
 
-    volumes, _ = get_volume_info(active_aws["ec2"], image_id, request.volume_size)
-    az_info = get_launch_template_info(active_aws["ec2"], config["lt_ids"])
+    volume_progress: List[str] = []
+    volumes, _ = get_volume_info(
+        active_aws["ec2"],
+        image_id,
+        request.volume_size,
+        on_progress=volume_progress.append,
+    )
+    for message in volume_progress:
+        yield LaunchUpdate("progress", message)
+
+    template_warnings: List[str] = []
+    az_info = get_launch_template_info(
+        active_aws["ec2"],
+        config["lt_ids"],
+        on_warning=template_warnings.append,
+    )
+    for message in template_warnings:
+        yield LaunchUpdate("warning", message)
 
     instance = None
     instance_id = None

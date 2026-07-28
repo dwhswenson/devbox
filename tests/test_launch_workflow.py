@@ -74,8 +74,19 @@ def test_iter_launch_workflow_emits_updates_and_result(
         "lt_ids": ["lt-123"],
         "table": table,
     }
-    mock_volumes.return_value = ([], 0)
-    mock_templates.return_value = {"lt-123": {"name": "us-east-1a", "index": "1"}}
+    def get_volumes(_ec2, _image_id, _minimum, *, on_progress):
+        on_progress("Increasing volume size from 20 GiB to 50 GiB")
+        return [], 50
+
+    def get_templates(_ec2, _lt_ids, *, on_warning):
+        on_warning(
+            "Unable to inspect launch template lt-123: AccessDenied: denied; "
+            "using fallback availability-zone label us-east-1a"
+        )
+        return {"lt-123": {"name": "us-east-1a", "index": "1"}}
+
+    mock_volumes.side_effect = get_volumes
+    mock_templates.side_effect = get_templates
     instance = make_instance("pending", "running", "running")
     mock_launch.return_value = (instance, "i-123", None)
     dns_manager = MagicMock()
@@ -102,6 +113,20 @@ def test_iter_launch_workflow_emits_updates_and_result(
         isinstance(event, LaunchUpdate) and "waiting for running state" in event.message
         for event in events
     )
+    volume_progress_index = events.index(
+        LaunchUpdate("progress", "Increasing volume size from 20 GiB to 50 GiB")
+    )
+    template_warning_index = events.index(
+        LaunchUpdate(
+            "warning",
+            "Unable to inspect launch template lt-123: AccessDenied: denied; "
+            "using fallback availability-zone label us-east-1a",
+        )
+    )
+    launch_attempt_index = events.index(
+        LaunchUpdate("progress", "Attempting to launch instance in us-east-1a")
+    )
+    assert volume_progress_index < template_warning_index < launch_attempt_index
     result = events[-1]
     assert result == LaunchResult(
         project="demo",

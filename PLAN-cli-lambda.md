@@ -344,15 +344,31 @@ Milestone: `devbox launch ...` runs from the local CLI through the deployed CLI 
   - Command: `tofu fmt -check -recursive`
 - `2026-07-17`: Terraform validation passed.
   - Command: `tofu validate`
+- `2026-07-28`: launch follow-up restored structured volume-adjustment
+  progress and made best-effort launch-template metadata failures visible as
+  structured warnings, with an application-log fallback outside the workflow.
+  The request and event wire formats are unchanged.
+- `2026-07-28`: focused launch tests passed.
+  - Command: `pixi run -e dev python -m pytest tests/test_launch.py tests/test_launch_workflow.py tests/commands/test_launch_command.py -q`
+  - Result: `93 passed, 1 warning`
+- `2026-07-28`: Ruff passed for the follow-up files.
+  - Command: `pixi run -e dev ruff check src/devbox/launch.py tests/test_launch.py tests/test_launch_workflow.py`
+- `2026-07-28`: full Python test suite passed after the follow-up.
+  - Command: `pixi run -e dev python -m pytest -q`
+  - Result: `479 passed, 1 warning`
 - Deployed-AWS validation to be run by DWHS from the deployment environment:
   - Deploy the reviewed Terraform plan containing the CLI Lambda image, timeout, environment, and IAM changes.
   - Run `devbox launch <project> --instance-type <type> --key-pair <key> --userdata-file <file>` and include `--dns-subdomain <label>` when DNS is configured.
-  - Confirm progress events arrive before completion, `devbox status <project>` shows the instance, userdata ran, and the optional DNS name resolves.
+  - Confirm volume-adjustment and instance-state progress events arrive before
+    completion, `devbox status <project>` shows the instance, userdata ran, and
+    the optional DNS name resolves.
   - Clean up with `devbox terminate <project>`.
 
 ### Phase 3 Handoff Notes
 
-- Automated implementation and validation are complete. The only remaining phase 3 item is the operator-run deployed-AWS acceptance flow above.
+- Automated implementation and validation, including the launch progress/error
+  visibility follow-up, are complete. The remaining phase 3 item is an
+  operator-run deployed-AWS acceptance rerun using the flow above.
 - Do not mark phase 3 complete or begin phase 4 until that outcome is recorded here.
 
 ## Phase 4: `new`
