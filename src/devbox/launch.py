@@ -1048,9 +1048,16 @@ def iter_launch_workflow(
     )
     terminal_states = {"shutting-down", "terminated", "stopping", "stopped"}
     for attempt in range(max_poll_attempts):
-        instance.reload()
-        state = _instance_state(instance)
+        try:
+            instance.reload()
+            state = _instance_state(instance)
+        except ClientError as exc:
+            error_code = exc.response.get("Error", {}).get("Code", "")
+            if error_code != "InvalidInstanceID.NotFound":
+                raise
+            state = "not yet visible to EC2"
         if state == "running":
+            instance_info = instance.meta.data
             break
         if state in terminal_states:
             raise RuntimeError(
@@ -1066,8 +1073,6 @@ def iter_launch_workflow(
         )
         sleeper(poll_interval_seconds)
 
-    instance.reload()
-    instance_info = instance.meta.data
     cname_domain = config["item"].get("CNAMEDomain")
     dns_name: Optional[str] = None
     if request.assign_dns:

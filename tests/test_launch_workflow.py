@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
+from botocore.exceptions import ClientError
 
 from devbox.launch import LaunchRequest, LaunchResult, LaunchUpdate, iter_launch_workflow
 
@@ -40,6 +41,14 @@ def make_aws() -> dict[str, MagicMock]:
         "ec2": MagicMock(),
         "ec2_resource": MagicMock(),
     }
+
+
+def make_client_error(code: str) -> ClientError:
+    """Build a representative EC2 client error."""
+    return ClientError(
+        {"Error": {"Code": code, "Message": code}},
+        "DescribeInstances",
+    )
 
 
 @patch("devbox.launch.update_instance_status")
@@ -207,6 +216,130 @@ def test_iter_launch_workflow_times_out_waiting_for_running(
                 max_poll_attempts=2,
             )
         )
+
+
+@patch("devbox.launch.update_instance_status")
+@patch("devbox.launch._resolve_ssh_username", return_value=("ubuntu", None))
+@patch("devbox.launch.DNSManager.from_ssm")
+@patch("devbox.launch.launch_instance")
+@patch("devbox.launch.get_launch_template_info")
+@patch("devbox.launch.get_volume_info", return_value=([], 0))
+@patch("devbox.launch.get_launch_config")
+def test_iter_launch_workflow_retries_instance_not_found(
+    mock_config,
+    _mock_volumes,
+    mock_templates,
+    mock_launch,
+    mock_dns,
+    _mock_username,
+    _mock_update,
+) -> None:
+    mock_config.return_value = {
+        "item": {"Status": "READY", "AMI": "ami-123"},
+        "lt_ids": ["lt-a"],
+        "table": MagicMock(),
+    }
+    mock_templates.return_value = {"lt-a": {"name": "us-east-1a", "index": "1"}}
+    instance = make_instance("running")
+    normal_reload = instance.reload.side_effect
+    calls = 0
+
+    def reload() -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise make_client_error("InvalidInstanceID.NotFound")
+        normal_reload()
+
+    instance.reload.side_effect = reload
+    mock_launch.return_value = (instance, "i-123", None)
+    mock_dns.return_value.provider = None
+    sleeper = MagicMock()
+
+    events = list(
+        iter_launch_workflow(
+            LaunchRequest(project="demo", instance_type="t3.medium", key_pair="key"),
+            aws=make_aws(),
+            sleeper=sleeper,
+        )
+    )
+
+    assert isinstance(events[-1], LaunchResult)
+    assert any(
+        isinstance(event, LaunchUpdate)
+        and "not yet visible to EC2" in event.message
+        for event in events
+    )
+    sleeper.assert_called_once_with(15)
+
+
+@patch("devbox.launch.launch_instance")
+@patch("devbox.launch.get_launch_template_info")
+@patch("devbox.launch.get_volume_info", return_value=([], 0))
+@patch("devbox.launch.get_launch_config")
+def test_iter_launch_workflow_times_out_when_instance_remains_not_found(
+    mock_config,
+    _mock_volumes,
+    mock_templates,
+    mock_launch,
+) -> None:
+    mock_config.return_value = {
+        "item": {"Status": "READY", "AMI": "ami-123"},
+        "lt_ids": ["lt-a"],
+        "table": MagicMock(),
+    }
+    mock_templates.return_value = {"lt-a": {"name": "us-east-1a", "index": "1"}}
+    instance = MagicMock()
+    instance.meta.data = {"State": {"Name": "pending"}}
+    instance.reload.side_effect = make_client_error("InvalidInstanceID.NotFound")
+    mock_launch.return_value = (instance, "i-123", None)
+
+    with pytest.raises(TimeoutError, match="did not reach running state"):
+        list(
+            iter_launch_workflow(
+                LaunchRequest(
+                    project="demo", instance_type="t3.medium", key_pair="key"
+                ),
+                aws=make_aws(),
+                sleeper=lambda _seconds: None,
+                max_poll_attempts=2,
+            )
+        )
+
+
+@patch("devbox.launch.launch_instance")
+@patch("devbox.launch.get_launch_template_info")
+@patch("devbox.launch.get_volume_info", return_value=([], 0))
+@patch("devbox.launch.get_launch_config")
+def test_iter_launch_workflow_propagates_other_reload_errors(
+    mock_config,
+    _mock_volumes,
+    mock_templates,
+    mock_launch,
+) -> None:
+    mock_config.return_value = {
+        "item": {"Status": "READY", "AMI": "ami-123"},
+        "lt_ids": ["lt-a"],
+        "table": MagicMock(),
+    }
+    mock_templates.return_value = {"lt-a": {"name": "us-east-1a", "index": "1"}}
+    instance = MagicMock()
+    instance.meta.data = {"State": {"Name": "pending"}}
+    instance.reload.side_effect = make_client_error("UnauthorizedOperation")
+    mock_launch.return_value = (instance, "i-123", None)
+
+    with pytest.raises(ClientError) as exc_info:
+        list(
+            iter_launch_workflow(
+                LaunchRequest(
+                    project="demo", instance_type="t3.medium", key_pair="key"
+                ),
+                aws=make_aws(),
+                sleeper=lambda _seconds: None,
+            )
+        )
+
+    assert exc_info.value.response["Error"]["Code"] == "UnauthorizedOperation"
 
 
 @pytest.mark.parametrize(
